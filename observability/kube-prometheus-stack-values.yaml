@@ -61,6 +61,10 @@ prometheus:
     serviceMonitorSelectorNilUsesHelmValues: false
     serviceMonitorNamespaceSelector: {}
 
+    # Envoy Gateway exposes proxy metrics through PodMonitor.
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorNamespaceSelector: {}
+
     resources:
       requests:
         cpu: 100m
