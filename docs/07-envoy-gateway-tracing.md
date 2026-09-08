@@ -47,7 +47,7 @@ otelcol_exporter_sent_spans{exporter="otlp_grpc/tempo",...} 10
 
 Tempo Trace ID direct lookup에서도 `platform-api`, `GET /`, HTTP 200 span이 반환되었습니다.
 
-따라서 다음 구간은 새로 확인할 필요가 없습니다.
+따라서 다음 구간은 이미 검증되었습니다.
 
 ```text
 FastAPI -> Collector -> Tempo = verified
@@ -129,9 +129,48 @@ otel-collector.monitoring:4317
 
 ---
 
+## 4. Cross-namespace OTLP backend 허용
+
+`EnvoyProxy`는 `envoy-gateway-system` namespace에 있고 OpenTelemetry Collector Service는 `monitoring` namespace에 있습니다.
+
+따라서 target namespace인 `monitoring`에서 해당 참조를 명시적으로 허용합니다.
+
+파일:
+
+```text
+gitops/platform/otel-referencegrant.yaml
+```
+
+구조:
+
+```text
+EnvoyProxy (envoy-gateway-system)
+        |
+        | backendRef
+        v
+ReferenceGrant (monitoring)
+        |
+        v
+otel-collector Service :4317
+```
+
+확인:
+
+```bash
+kubectl get referencegrant -n monitoring
+```
+
+기대:
+
+```text
+allow-envoyproxy-to-otel-collector
+```
+
+---
+
 # 적용
 
-## 4. Git 변경 가져오기
+## 5. Git 변경 가져오기
 
 ```bash
 cd ~/platform-engineering-lab
@@ -148,7 +187,7 @@ kubectl get applications -n argocd
 
 ---
 
-## 5. EnvoyProxy 생성 확인
+## 6. EnvoyProxy 생성 확인
 
 ```bash
 kubectl get envoyproxy -A
@@ -170,7 +209,7 @@ kubectl get envoyproxy platform-envoy-proxy \
 
 ---
 
-## 6. GatewayClass parametersRef 확인
+## 7. GatewayClass parametersRef 확인
 
 ```bash
 kubectl get gatewayclass platform-eg -o yaml
@@ -188,7 +227,7 @@ parametersRef:
 
 ---
 
-## 7. Envoy data plane 상태 확인
+## 8. Envoy data plane 상태 확인
 
 ```bash
 kubectl get pods \
@@ -216,7 +255,7 @@ kubectl get httproute web -n demo-app
 
 ---
 
-## 8. Collector 설정 원복
+## 9. Collector 설정 확인
 
 FastAPI tracing 검증 중 사용한 detailed debug exporter는 로그 노이즈가 크므로 제거했습니다.
 
@@ -236,11 +275,71 @@ helm upgrade otel-collector \
 kubectl rollout status deployment/otel-collector -n monitoring
 ```
 
+OTLP/gRPC Service port도 확인합니다.
+
+```bash
+kubectl get svc otel-collector -n monitoring \
+  -o jsonpath='{range .spec.ports[*]}{.name}{" port="}{.port}{" appProtocol="}{.appProtocol}{"\n"}{end}'
+```
+
+4317 포트는 gRPC OTLP endpoint입니다.
+
 ---
 
-# Distributed Trace 검증
+# Docker Desktop + WSL 네트워크 주의사항
 
-## 9. Gateway를 통해 요청 발생
+## 10. MetalLB External IP가 WSL에서 직접 접근되지 않는 경우
+
+이 Lab은 Windows + WSL2 + Docker Desktop + kind 조합을 사용합니다.
+
+MetalLB가 예를 들어 다음 External IP를 할당할 수 있습니다.
+
+```text
+172.18.255.200
+```
+
+하지만 Docker Desktop의 container network는 Windows/WSL host network와 분리되어 있기 때문에 WSL에서 아래 요청이 응답 없이 대기할 수 있습니다.
+
+```bash
+curl -H "Host: web.lab.local" http://172.18.255.200/
+```
+
+이 경우 Kubernetes Gateway, HTTPRoute 또는 FastAPI 장애로 바로 판단하면 안 됩니다.
+
+실제 Lab에서도 다음 상태를 확인했습니다.
+
+```text
+kubectl port-forward -> Envoy Gateway -> FastAPI = 정상
+WSL -> MetalLB External IP direct curl          = timeout/hang
+```
+
+따라서 Docker published port를 가진 작은 TCP proxy를 사용해 WSL과 kind network를 연결합니다.
+
+이 proxy는 Envoy Service를 직접 port-forward하는 방식과 다르게 실제 MetalLB External IP로 전달합니다.
+
+```text
+WSL localhost:8080
+        |
+        v
+Docker published port
+        |
+        v
+socat container --network kind
+        |
+        v
+MetalLB External IP :80
+        |
+        v
+Envoy Gateway
+        |
+        v
+HTTPRoute
+        |
+        v
+FastAPI
+```
+
+### Gateway External IP 가져오기
 
 ```bash
 GATEWAY_IP=$(kubectl get gateway platform-gateway \
@@ -250,20 +349,101 @@ GATEWAY_IP=$(kubectl get gateway platform-gateway \
 echo "$GATEWAY_IP"
 ```
 
-요청:
+### 기존 proxy 정리
 
 ```bash
-for i in {1..10}; do
-  curl -s \
-    -H "Host: web.lab.local" \
-    "http://${GATEWAY_IP}/" >/dev/null
-  sleep 0.2
-done
+docker rm -f platform-gateway-http-proxy 2>/dev/null || true
+```
+
+8080 포트를 이미 사용 중인지 확인할 수 있습니다.
+
+```bash
+ss -lntp | grep ':8080' || true
+```
+
+기존 `kubectl port-forward`가 8080을 사용 중이면 먼저 종료합니다.
+
+### HTTP proxy 실행
+
+```bash
+docker run -d \
+  --name platform-gateway-http-proxy \
+  --restart unless-stopped \
+  --network kind \
+  -p 127.0.0.1:8080:8080 \
+  alpine/socat \
+  TCP-LISTEN:8080,fork,reuseaddr \
+  TCP:${GATEWAY_IP}:80
+```
+
+상태 확인:
+
+```bash
+docker ps --filter name=platform-gateway-http-proxy
+```
+
+기대:
+
+```text
+STATUS   Up ...
+```
+
+실패했거나 바로 종료됐다면:
+
+```bash
+docker ps -a --filter name=platform-gateway-http-proxy
+docker logs platform-gateway-http-proxy
 ```
 
 ---
 
-## 10. Tempo에서 최근 trace 검색
+# Distributed Trace 검증
+
+## 11. 실제 Gateway 경로를 통해 요청 발생
+
+Docker proxy를 사용한 요청:
+
+```bash
+curl -v \
+  -H "Host: web.lab.local" \
+  http://127.0.0.1:8080/
+```
+
+기대:
+
+```text
+HTTP/1.1 200 OK
+```
+
+FastAPI 응답이 반환되어야 합니다.
+
+Trace를 충분히 생성하기 위해 여러 번 호출합니다.
+
+```bash
+for i in {1..20}; do
+  curl -s \
+    -H "Host: web.lab.local" \
+    http://127.0.0.1:8080/ >/dev/null
+  sleep 0.2
+done
+```
+
+이 요청은 다음 경로를 실제로 통과합니다.
+
+```text
+Client
+  -> Docker socat proxy
+  -> MetalLB External IP
+  -> Envoy Gateway
+  -> HTTPRoute
+  -> FastAPI
+```
+
+`kubectl port-forward svc/web ...`처럼 Application Service에 직접 연결하면 Envoy Gateway를 우회하므로 distributed tracing 검증에 사용하면 안 됩니다.
+
+---
+
+## 12. Tempo에서 최근 trace 검색
 
 Tempo port-forward:
 
@@ -287,7 +467,7 @@ Trace ID 하나를 선택합니다.
 
 ---
 
-## 11. Trace ID 직접 조회
+## 13. Trace ID 직접 조회
 
 ```bash
 TRACE_ID=<trace-id>
@@ -296,7 +476,21 @@ curl -s \
   "http://localhost:3200/api/traces/${TRACE_ID}"
 ```
 
-하나의 trace 안에 최소 두 계층이 보여야 합니다.
+서비스 이름 확인:
+
+```bash
+curl -s \
+  "http://localhost:3200/api/traces/${TRACE_ID}" \
+  | jq -r '
+      .batches[]
+      | .resource.attributes[]
+      | select(.key=="service.name")
+      | .value.stringValue
+    ' \
+  | sort -u
+```
+
+하나의 trace 안에 Application뿐 아니라 Envoy/proxy 계열 resource가 함께 있어야 합니다.
 
 ```text
 Envoy / proxy span
@@ -307,9 +501,23 @@ platform-api / GET /
 
 중요한 것은 span 이름 자체보다 두 span이 **동일한 Trace ID** 안에 존재하는가입니다.
 
+span parent/child 관계 확인:
+
+```bash
+curl -s \
+  "http://localhost:3200/api/traces/${TRACE_ID}" \
+  | jq -r '
+      .batches[]
+      | .scopeSpans[]
+      | .spans[]
+      | [.name, .traceId, .spanId, .parentSpanId]
+      | @tsv
+    '
+```
+
 ---
 
-## 12. Grafana에서 확인
+## 14. Grafana에서 확인
 
 ```bash
 kubectl port-forward \
@@ -323,24 +531,61 @@ Grafana:
 ```text
 Explore
  -> Tempo
- -> Search
- -> trace open
+ -> Time range: Last 15 minutes
+ -> TraceQL: { resource.service.name = "platform-api" }
+ -> Run query
+ -> 최신 trace open
 ```
 
 Trace waterfall에서:
 
 ```text
-Gateway span
-  └─ FastAPI span
+Gateway / Envoy span
+  └─ platform-api / GET /
 ```
 
 의 parent/child 관계와 duration을 확인합니다.
+
+새 요청을 만들었는데 과거 시각의 trace만 보이면 먼저 Gateway 요청 자체가 성공했는지 확인합니다.
 
 ---
 
 # Troubleshooting
 
-## 13. FastAPI span만 보이고 Gateway span이 없는 경우
+## 15. curl이 응답 없이 멈추는 경우
+
+MetalLB External IP에 직접 요청했다면 Docker Desktop/WSL network boundary를 먼저 의심합니다.
+
+```bash
+curl --connect-timeout 3 --max-time 5 -v \
+  -H "Host: web.lab.local" \
+  "http://${GATEWAY_IP}/"
+```
+
+직접 접근은 timeout인데 아래 요청은 성공한다면 proxy 경로를 사용합니다.
+
+```bash
+curl --max-time 5 -v \
+  -H "Host: web.lab.local" \
+  http://127.0.0.1:8080/
+```
+
+proxy 상태:
+
+```bash
+docker ps --filter name=platform-gateway-http-proxy
+```
+
+종료된 경우:
+
+```bash
+docker ps -a --filter name=platform-gateway-http-proxy
+docker logs platform-gateway-http-proxy
+```
+
+---
+
+## 16. FastAPI span만 보이고 Gateway span이 없는 경우
 
 EnvoyProxy 적용 여부:
 
@@ -354,6 +599,12 @@ GatewayClass 연결:
 
 ```bash
 kubectl get gatewayclass platform-eg -o yaml
+```
+
+ReferenceGrant:
+
+```bash
+kubectl get referencegrant -n monitoring
 ```
 
 Envoy Pod 최근 로그:
@@ -379,7 +630,7 @@ kubectl run envoy-otel-netcheck \
 
 ---
 
-## 14. Envoy span과 FastAPI span이 서로 다른 Trace ID인 경우
+## 17. Envoy span과 FastAPI span이 서로 다른 Trace ID인 경우
 
 이는 trace context propagation 문제입니다.
 
@@ -401,8 +652,10 @@ FastAPI Service 직접 port-forward 요청은 Gateway를 거치지 않으므로 
 ```text
 EnvoyProxy created
 GatewayClass references EnvoyProxy
+ReferenceGrant allows cross-namespace OTLP backend
 Envoy data plane Ready
-Gateway traffic succeeds
+Docker proxy exposes the MetalLB path to WSL
+Gateway traffic returns HTTP 200
 Envoy sends trace to Collector
 FastAPI span still reaches Collector
 Tempo stores both spans
