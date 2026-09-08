@@ -1,0 +1,43 @@
+# Lightweight Tempo configuration for the local kind lab.
+# Chart: grafana-community/tempo 2.3.0
+# App: Grafana Tempo 2.10.8
+
+replicas: 1
+
+tempo:
+  reportingEnabled: false
+  retention: 6h
+  memBallastSizeMbs: 0
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+
+persistence:
+  enabled: false
+
+service:
+  type: ClusterIP
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
