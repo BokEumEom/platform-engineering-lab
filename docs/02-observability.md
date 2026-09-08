@@ -384,7 +384,216 @@ kubectl get pods -n monitoring
 
 ---
 
-## 12. 왜 아직 Alertmanager를 끄는가
+## 12. 실제 장애 사례 — Grafana OOMKilled
+
+Dashboard sidecar와 추가 dashboard를 적용한 뒤 Grafana port-forward가 갑자기 끊겼습니다.
+
+증상:
+
+```text
+an error occurred forwarding 3000 -> 3000
+read: connection reset by peer
+error: lost connection to pod
+```
+
+처음에는 port-forward 자체 문제처럼 보일 수 있지만, 실제로는 Grafana Pod가 재시작되면서 기존 연결이 끊긴 것이었습니다.
+
+### 12.1 Pod 상태 확인
+
+먼저 Grafana Pod를 확인합니다.
+
+```bash
+kubectl get pods -n monitoring \
+  -l app.kubernetes.io/name=grafana \
+  -o wide
+```
+
+그 다음 container의 restart 횟수와 마지막 종료 이유를 확인합니다.
+
+```bash
+kubectl get pod \
+  -n monitoring \
+  -l app.kubernetes.io/name=grafana \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{range .status.containerStatuses[*]}{"  "}{.name}{" restart="}{.restartCount}{" lastReason="}{.lastState.terminated.reason}{"\n"}{end}{end}'
+```
+
+실제 결과:
+
+```text
+monitoring-grafana-...
+  grafana restart=2 lastReason=OOMKilled
+  grafana-sc-dashboard restart=0 lastReason=
+  grafana-sc-datasources restart=0 lastReason=
+```
+
+이 결과로 원인이 확정됩니다.
+
+```text
+OOMKilled
+ -> container가 memory limit을 초과
+ -> kubelet/container runtime이 해당 container를 종료
+ -> Pod 내부 Grafana container가 재시작
+ -> 기존 port-forward 연결도 끊김
+```
+
+### 12.2 현재 리소스 확인
+
+Helm values에서 당시 Grafana memory limit은 다음과 같았습니다.
+
+```yaml
+grafana:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+```
+
+Grafana 본체와 dashboard provisioning이 추가되면서 로컬 Lab 기준 `256Mi`는 여유가 부족했습니다.
+
+### 12.3 Git에 있는 Helm values 수정
+
+일회성 `kubectl edit` 또는 `kubectl set resources`로만 변경하지 않고 Git에 있는 values를 수정했습니다.
+
+최종 설정:
+
+```yaml
+grafana:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+```
+
+이렇게 해야 다음 Helm upgrade에서도 동일한 리소스 설정이 재현됩니다.
+
+### 12.4 Helm upgrade
+
+```bash
+helm upgrade monitoring \
+  prometheus-community/kube-prometheus-stack \
+  --version 90.0.0 \
+  -n monitoring \
+  -f observability/kube-prometheus-stack-values.yaml
+```
+
+rollout 확인:
+
+```bash
+kubectl rollout status \
+  deployment/monitoring-grafana \
+  -n monitoring
+```
+
+새 Pod 확인:
+
+```bash
+kubectl get pods -n monitoring \
+  -l app.kubernetes.io/name=grafana
+```
+
+목표:
+
+```text
+READY   STATUS    RESTARTS
+3/3     Running   0
+```
+
+### 12.5 실제 메모리 사용량 확인
+
+Metrics Server가 설치되어 있으므로 container 단위 사용량도 확인할 수 있습니다.
+
+```bash
+kubectl top pod \
+  -n monitoring \
+  -l app.kubernetes.io/name=grafana \
+  --containers
+```
+
+여기서 중요한 점은 단순히 limit을 크게 올리는 것이 아니라 실제 사용량을 확인하고 적절한 request/limit을 잡는 것입니다.
+
+### 12.6 port-forward 재검증
+
+```bash
+kubectl port-forward \
+  -n monitoring \
+  svc/monitoring-grafana \
+  3000:80
+```
+
+브라우저에서 다시 접속합니다.
+
+```text
+http://localhost:3000
+```
+
+### 12.7 장애 분석 순서 정리
+
+이번 사례는 아래 순서로 접근했습니다.
+
+```text
+port-forward 끊김
+      |
+      v
+Pod 상태 확인
+      |
+      v
+restartCount 증가 확인
+      |
+      v
+lastState.terminated.reason
+      |
+      v
+OOMKilled
+      |
+      v
+resources.limits.memory 확인
+      |
+      v
+Git의 Helm values 수정
+      |
+      v
+helm upgrade
+      |
+      v
+rollout / restart / memory 사용량 검증
+```
+
+### 12.8 Kubernetes 학습 포인트
+
+`OOMKilled`는 애플리케이션 로그만 보고 찾기 어려울 수 있습니다.
+
+다음 명령들이 중요합니다.
+
+```bash
+kubectl get pods
+kubectl describe pod
+kubectl get pod -o jsonpath=...
+kubectl top pod --containers
+kubectl get events --sort-by='.lastTimestamp'
+```
+
+또한 다음 차이를 기억합니다.
+
+```text
+requests.memory
+ -> Scheduler가 Pod를 배치할 때 필요한 최소 자원 기준
+
+limits.memory
+ -> container가 사용할 수 있는 메모리 상한
+ -> 초과 시 OOMKilled 가능
+```
+
+이번 실습의 핵심은 장애를 발견한 뒤 클러스터에서 임시 수정하는 데서 끝내지 않고, **Git에 선언된 Helm values까지 수정해 desired state를 함께 고쳤다는 점**입니다.
+
+---
+
+## 13. 왜 아직 Alertmanager를 끄는가
 
 이 단계의 학습 목표는:
 
@@ -404,7 +613,7 @@ Prometheus와 Grafana 흐름이 검증된 다음 단계에서 alert rule과 Open
 
 ---
 
-## 13. 다음 단계
+## 14. 다음 단계
 
 이번 단계 성공 기준:
 
@@ -414,6 +623,7 @@ ServiceMonitor discovered
 Prometheus target UP
 PromQL returns application metrics
 Grafana can query Prometheus
+Grafana dashboard provisioning works without OOMKilled
 ```
 
 그 다음:
