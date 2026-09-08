@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-app
+  namespace: argocd
+
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/BokEumEom/platform-engineering-lab.git
+    targetRevision: main
+    path: gitops/apps/demo-app
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo-app
+
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true
+
+    managedNamespaceMetadata:
+      labels:
+        gateway-access: "true"
