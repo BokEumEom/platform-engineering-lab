@@ -26,7 +26,7 @@ spec:
 
       containers:
         - name: api
-          image: ghcr.io/bokeumeom/platform-api:5e43475f73c25319ce31d46d98fe72a77460b667
+          image: ghcr.io/bokeumeom/platform-api:1cd54dbb808c0f07b895485dde5c4770cce053ca
           imagePullPolicy: IfNotPresent
 
           ports:
