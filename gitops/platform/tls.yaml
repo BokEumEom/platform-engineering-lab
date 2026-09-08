@@ -1,0 +1,25 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: lab-selfsigned
+  namespace: platform-system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: web-lab-local
+  namespace: platform-system
+spec:
+  secretName: web-lab-local-tls
+  duration: 2160h
+  renewBefore: 360h
+  issuerRef:
+    name: lab-selfsigned
+    kind: Issuer
+  dnsNames:
+    - web.lab.local
+  privateKey:
+    algorithm: ECDSA
+    size: 256
