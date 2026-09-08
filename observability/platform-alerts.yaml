@@ -1,0 +1,72 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-lab-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: platform-engineering-lab
+spec:
+  groups:
+    - name: demo-app.availability
+      rules:
+        - alert: DemoAppMetricsTargetDown
+          expr: |
+            absent(up{namespace="demo-app"})
+            or
+            min(up{namespace="demo-app"}) == 0
+          for: 2m
+          labels:
+            severity: critical
+            service: demo-app
+          annotations:
+            summary: "demo-app Prometheus target is down"
+            description: "Prometheus has been unable to scrape at least one demo-app target for more than 2 minutes."
+
+        - alert: DemoAppHigh5xxRate
+          expr: |
+            (
+              sum(rate(http_requests_total{namespace="demo-app",handler!="/metrics",status=~"5.."}[5m]))
+              /
+              clamp_min(
+                sum(rate(http_requests_total{namespace="demo-app",handler!="/metrics"}[5m])),
+                0.001
+              )
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: warning
+            service: demo-app
+          annotations:
+            summary: "demo-app 5xx rate is above 5%"
+            description: "More than 5% of demo-app HTTP requests have returned 5xx responses for at least 2 minutes."
+
+        - alert: DemoAppHighP95Latency
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (
+                rate(http_request_duration_seconds_bucket{namespace="demo-app",handler!="/metrics"}[5m])
+              )
+            ) > 0.5
+          for: 2m
+          labels:
+            severity: warning
+            service: demo-app
+          annotations:
+            summary: "demo-app P95 latency is above 500ms"
+            description: "The demo-app P95 HTTP request latency has remained above 500ms for at least 2 minutes."
+
+    - name: envoy-gateway.availability
+      rules:
+        - alert: EnvoyProxyDown
+          expr: |
+            absent(envoy_server_live)
+            or
+            min(envoy_server_live) < 1
+          for: 2m
+          labels:
+            severity: critical
+            service: envoy-gateway
+          annotations:
+            summary: "Envoy Gateway proxy is down"
+            description: "Prometheus cannot see a live Envoy proxy for more than 2 minutes."
