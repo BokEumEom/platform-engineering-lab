@@ -1,0 +1,17 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: platform-envoy-proxy
+  namespace: envoy-gateway-system
+spec:
+  telemetry:
+    tracing:
+      # Lab only: trace every request so parent/child propagation is easy to verify.
+      # Production environments should choose a sampling policy based on traffic volume.
+      samplingRate: 100
+      provider:
+        type: OpenTelemetry
+        backendRefs:
+          - name: otel-collector
+            namespace: monitoring
+            port: 4317
