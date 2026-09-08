@@ -1,0 +1,13 @@
+# cert-manager for the local Kubernetes platform lab.
+# Chart: oci://quay.io/jetstack/charts/cert-manager
+# Version: v1.21.1
+
+crds:
+  enabled: true
+
+# Keep Gateway API integration enabled for this lab. The Certificate below is
+# managed explicitly with GitOps, while this also prepares the cluster for
+# Gateway annotations and ACME Gateway HTTP-01 in later environments.
+config:
+  gatewayAPI:
+    enabled: true
