@@ -51,6 +51,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The workflow writes a deployment commit back to main. Other documentation
+      # or manifest commits may land while the image is building, so update the
+      # local branch before editing the GitOps manifest.
+      - name: Sync latest main
+        shell: bash
+        run: |
+          git fetch origin main
+          git rebase origin/main
+
       - name: Update GitOps manifest
         shell: bash
         run: |
@@ -98,4 +107,19 @@ jobs:
           git diff --cached --quiet && exit 0
 
           git commit -m "chore: deploy platform-api ${GITHUB_SHA::7}"
-          git push
+
+          # Retry a few times if main advances again in the short window between
+          # rebase and push.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+
+            echo "push attempt ${attempt} failed; rebasing onto latest main"
+            git fetch origin main
+            git rebase origin/main
+            sleep 2
+          done
+
+          echo "failed to push GitOps manifest after retries"
+          exit 1
