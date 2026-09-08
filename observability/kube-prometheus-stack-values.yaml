@@ -55,6 +55,15 @@ grafana:
       label: grafana_dashboard
       labelValue: "1"
       searchNamespace: monitoring
+  additionalDataSources:
+    - name: Tempo
+      uid: tempo
+      type: tempo
+      access: proxy
+      url: http://tempo.monitoring.svc.cluster.local:3200
+      editable: true
+      jsonData:
+        httpMethod: GET
   resources:
     requests:
       cpu: 50m
