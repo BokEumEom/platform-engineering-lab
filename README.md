@@ -4,6 +4,55 @@
 
 단순히 Kubernetes 리소스를 배포하는 데서 끝내지 않고, 애플리케이션 소스 변경이 GitHub Actions와 GHCR, Argo CD를 거쳐 Kubernetes까지 자동 반영되는 흐름을 구성하는 것을 목표로 합니다.
 
+## 처음 시작한다면
+
+Kubernetes나 Platform Engineering이 익숙하지 않다면 아래 문서부터 순서대로 보는 것을 권장합니다.
+
+1. **[Beginner Walkthrough — 처음부터 설치하고 따라 하기](docs/00-beginner-walkthrough.md)**
+   - Docker Desktop + WSL2
+   - `kubectl` / Helm 준비
+   - Envoy Gateway `helm install`
+   - Envoy Gateway quickstart `kubectl apply`
+   - Metrics Server 설치
+   - MetalLB `kubectl apply`
+   - MetalLB IP Pool 설정
+   - Argo CD `kubectl apply --server-side`
+   - Argo CD UI/CLI 접속
+   - GitOps bootstrap
+   - GitHub Actions + GHCR
+   - 최종 검증 및 Troubleshooting
+
+2. **[Kubernetes Platform Lab — Step by Step](docs/01-kubernetes-platform-lab.md)**
+   - 각 Kubernetes 개념을 조금 더 깊게 복습
+   - HPA / PDB / scheduling
+   - cordon / drain
+   - topology spread / affinity / taints
+   - GitOps ownership
+   - 실제 장애 원인과 해결 과정
+
+초보자에게 가장 중요한 구분은 다음입니다.
+
+```text
+Platform dependency 설치
+  Envoy Gateway
+  MetalLB
+  Metrics Server
+  Argo CD
+
+        vs
+
+우리 서비스의 desired state
+  GatewayClass
+  Gateway
+  HTTPRoute
+  Deployment
+  Service
+  HPA
+  PDB
+```
+
+현재 Lab에서는 controller/dependency를 먼저 Helm 또는 `kubectl apply`로 bootstrap하고, 이후 애플리케이션과 Gateway resource는 Argo CD + Kustomize로 GitOps 관리합니다.
+
 ## 현재 구현 상태
 
 - Kubernetes v1.36.1 / Docker Desktop kind 3-node cluster
@@ -136,9 +185,24 @@ platform-engineering-lab/
 │           ├── pdb.yaml
 │           └── kustomization.yaml
 ├── docs/
+│   ├── 00-beginner-walkthrough.md
 │   └── 01-kubernetes-platform-lab.md
 └── metallb-config.yaml
 ```
+
+## Installation methods used in this Lab
+
+| Component | Installation / Management |
+|---|---|
+| Envoy Gateway | Helm |
+| Envoy quickstart | `kubectl apply -f` |
+| Metrics Server | `kubectl apply -f` |
+| MetalLB controller/speaker | `kubectl apply -f` |
+| MetalLB network config | `kubectl apply -f metallb-config.yaml` |
+| Argo CD | `kubectl apply --server-side -f` |
+| Gateway / HTTPRoute / application workload | Argo CD + Kustomize |
+
+이 설치 과정의 정확한 명령은 [Beginner Walkthrough](docs/00-beginner-walkthrough.md)에 기록했습니다.
 
 ## CI/CD flow
 
@@ -247,11 +311,10 @@ source commit
    == GitOps deployment version
 ```
 
-## Detailed learning notes
+## Learning notes
 
-실습 순서, 명령어, 장애 원인과 해결 과정은 아래 문서에 정리했습니다.
-
-- [Kubernetes Platform Lab - Step by Step](docs/01-kubernetes-platform-lab.md)
+- [00 — Beginner Walkthrough](docs/00-beginner-walkthrough.md)
+- [01 — Kubernetes Platform Lab Step by Step](docs/01-kubernetes-platform-lab.md)
 
 ## Next phases
 
