@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - envoyproxy.yaml
+  - otel-referencegrant.yaml
   - gatewayclass.yaml
   - tls.yaml
   - gateway.yaml
