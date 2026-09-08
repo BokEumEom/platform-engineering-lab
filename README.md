@@ -1,8 +1,8 @@
 # Platform Engineering Lab
 
-로컬 Kubernetes 환경에서 **Gateway API, GitOps, Autoscaling, Scheduling, CI/CD**를 실제로 연결해보는 Platform Engineering 학습 프로젝트입니다.
+로컬 Kubernetes 환경에서 **Gateway API, GitOps, Autoscaling, Scheduling, CI/CD, Observability**를 실제로 연결해보는 Platform Engineering 학습 프로젝트입니다.
 
-단순히 Kubernetes 리소스를 배포하는 데서 끝내지 않고, 애플리케이션 소스 변경이 GitHub Actions와 GHCR, Argo CD를 거쳐 Kubernetes까지 자동 반영되는 흐름을 구성하는 것을 목표로 합니다.
+단순히 Kubernetes 리소스를 배포하는 데서 끝내지 않고, 애플리케이션 소스 변경이 GitHub Actions와 GHCR, Argo CD를 거쳐 Kubernetes까지 자동 반영되고, 이후 Prometheus/Grafana로 상태를 관측하는 흐름을 구성하는 것을 목표로 합니다.
 
 ## 처음 시작한다면
 
@@ -30,6 +30,13 @@ Kubernetes나 Platform Engineering이 익숙하지 않다면 아래 문서부터
    - GitOps ownership
    - 실제 장애 원인과 해결 과정
 
+3. **[Observability — Prometheus + Grafana](docs/02-observability.md)**
+   - FastAPI `/metrics`
+   - kube-prometheus-stack 경량 설치
+   - ServiceMonitor
+   - Prometheus target / PromQL
+   - Grafana 접속 및 기본 메트릭 확인
+
 초보자에게 가장 중요한 구분은 다음입니다.
 
 ```text
@@ -38,6 +45,7 @@ Platform dependency 설치
   MetalLB
   Metrics Server
   Argo CD
+  Prometheus / Grafana
 
         vs
 
@@ -66,6 +74,8 @@ Platform dependency 설치
 - GitHub Actions CI
 - GHCR image registry
 - Git commit SHA 기반 immutable image deployment
+- FastAPI Prometheus `/metrics` endpoint
+- Observability values / ServiceMonitor manifest 준비
 
 현재 검증 상태:
 
@@ -122,6 +132,17 @@ GitHub Actions
                     Envoy Gateway
                           |
                        MetalLB
+
+FastAPI /metrics
+      |
+      v
+ServiceMonitor
+      |
+      v
+Prometheus
+      |
+      v
+Grafana
 ```
 
 ## Platform / Application ownership model
@@ -184,9 +205,13 @@ platform-engineering-lab/
 │           ├── hpa.yaml
 │           ├── pdb.yaml
 │           └── kustomization.yaml
+├── observability/
+│   ├── kube-prometheus-stack-values.yaml
+│   └── demo-app-servicemonitor.yaml
 ├── docs/
 │   ├── 00-beginner-walkthrough.md
-│   └── 01-kubernetes-platform-lab.md
+│   ├── 01-kubernetes-platform-lab.md
+│   └── 02-observability.md
 └── metallb-config.yaml
 ```
 
@@ -201,8 +226,10 @@ platform-engineering-lab/
 | MetalLB network config | `kubectl apply -f metallb-config.yaml` |
 | Argo CD | `kubectl apply --server-side -f` |
 | Gateway / HTTPRoute / application workload | Argo CD + Kustomize |
+| Prometheus / Grafana / Prometheus Operator | Helm (`kube-prometheus-stack`) |
+| FastAPI scrape target | ServiceMonitor |
 
-이 설치 과정의 정확한 명령은 [Beginner Walkthrough](docs/00-beginner-walkthrough.md)에 기록했습니다.
+이 설치 과정의 정확한 명령은 [Beginner Walkthrough](docs/00-beginner-walkthrough.md)와 [Observability Guide](docs/02-observability.md)에 기록했습니다.
 
 ## CI/CD flow
 
@@ -263,6 +290,8 @@ image: ghcr.io/bokeumeom/platform-api:<commit-sha>
 - Argo CD GitOps
 - container registry / immutable image tag
 - rolling deployment
+- Prometheus metrics exposure
+- ServiceMonitor discovery model
 
 ## Key lessons
 
@@ -311,27 +340,27 @@ source commit
    == GitOps deployment version
 ```
 
+### CI writing back to Git
+
+CI가 GitOps manifest를 같은 저장소에 commit하기 때문에 workflow 실행 중 `main`이 앞서가면 non-fast-forward push가 발생할 수 있습니다. 현재 workflow는 manifest 수정 전에 최신 `main`으로 rebase하고 push 재시도를 수행하도록 보강했습니다.
+
 ## Learning notes
 
 - [00 — Beginner Walkthrough](docs/00-beginner-walkthrough.md)
 - [01 — Kubernetes Platform Lab Step by Step](docs/01-kubernetes-platform-lab.md)
+- [02 — Observability: Prometheus + Grafana](docs/02-observability.md)
 
 ## Next phases
 
-다음 단계는 아래 순서로 확장할 예정입니다.
+현재 진행 중인 Observability 단계 이후 아래 순서로 확장할 예정입니다.
 
-1. Observability
-   - Prometheus
-   - Grafana
-   - kube-state-metrics
-   - FastAPI metrics
-   - Envoy Gateway metrics
-   - OpenTelemetry
-2. TLS / cert-manager
-3. Policy / security
-4. EKS migration
-5. Karpenter
-6. AWS Load Balancing
-7. Terraform based environment provisioning
+1. Envoy Gateway metrics / alert rule
+2. OpenTelemetry traces
+3. TLS / cert-manager
+4. Policy / security
+5. EKS migration
+6. Karpenter
+7. AWS Load Balancing
+8. Terraform based environment provisioning
 
-로컬 환경에서는 Kubernetes 스케줄링과 GitOps 동작을 검증하고, 이후 EKS에서 클라우드 node provisioning과 Karpenter까지 확장하는 방향입니다.
+로컬 환경에서는 Kubernetes 스케줄링, GitOps, 모니터링 동작을 검증하고, 이후 EKS에서 클라우드 node provisioning과 Karpenter까지 확장하는 방향입니다.
