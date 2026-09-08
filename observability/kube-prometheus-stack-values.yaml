@@ -1,12 +1,35 @@
 # Lightweight values for the local Docker Desktop / kind lab.
 # Chart: prometheus-community/kube-prometheus-stack 90.0.0
 
-# Keep the first observability phase focused on metrics and dashboards.
+# Keep upstream default rules disabled so this lab can learn from a small,
+# explicit set of application/platform alerts first.
 defaultRules:
   create: false
 
 alertmanager:
-  enabled: false
+  enabled: true
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by:
+        - alertname
+        - namespace
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 1h
+      receiver: "null"
+    receivers:
+      - name: "null"
+  alertmanagerSpec:
+    retention: 6h
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 150m
+        memory: 192Mi
 
 # These control-plane endpoints are commonly not directly reachable in a
 # Docker Desktop / kind lab. Disable them initially to avoid noisy DOWN targets.
@@ -64,6 +87,12 @@ prometheus:
     # Envoy Gateway exposes proxy metrics through PodMonitor.
     podMonitorSelectorNilUsesHelmValues: false
     podMonitorNamespaceSelector: {}
+
+    # Allow our standalone PrometheusRule resources to be discovered without
+    # requiring the Helm release label.
+    ruleSelectorNilUsesHelmValues: false
+    ruleSelector: {}
+    ruleNamespaceSelector: {}
 
     resources:
       requests:
