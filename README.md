@@ -2,7 +2,7 @@
 
 로컬 Kubernetes 환경에서 **Gateway API, GitOps, Autoscaling, Scheduling, CI/CD, Observability**를 실제로 연결해보는 Platform Engineering 학습 프로젝트입니다.
 
-단순히 Kubernetes 리소스를 배포하는 데서 끝내지 않고, 애플리케이션 소스 변경이 GitHub Actions와 GHCR, Argo CD를 거쳐 Kubernetes까지 자동 반영되고, 이후 Prometheus/Grafana로 상태를 관측하는 흐름을 구성하는 것을 목표로 합니다.
+단순히 Kubernetes 리소스를 배포하는 데서 끝내지 않고, 애플리케이션 소스 변경이 GitHub Actions와 GHCR, Argo CD를 거쳐 Kubernetes까지 자동 반영되고, Prometheus/Grafana/Alertmanager로 운영 상태를 관측하고 경보까지 검증하는 흐름을 구성합니다.
 
 ## 처음 시작한다면
 
@@ -12,18 +12,11 @@ Kubernetes나 Platform Engineering이 익숙하지 않다면 아래 문서부터
    - Docker Desktop + WSL2
    - `kubectl` / Helm 준비
    - Envoy Gateway `helm install`
-   - Envoy Gateway quickstart `kubectl apply`
-   - Metrics Server 설치
-   - MetalLB `kubectl apply`
-   - MetalLB IP Pool 설정
-   - Argo CD `kubectl apply --server-side`
-   - Argo CD UI/CLI 접속
+   - Metrics Server / MetalLB / Argo CD 설치
    - GitOps bootstrap
    - GitHub Actions + GHCR
-   - 최종 검증 및 Troubleshooting
 
 2. **[Kubernetes Platform Lab — Step by Step](docs/01-kubernetes-platform-lab.md)**
-   - 각 Kubernetes 개념을 조금 더 깊게 복습
    - HPA / PDB / scheduling
    - cordon / drain
    - topology spread / affinity / taints
@@ -35,37 +28,32 @@ Kubernetes나 Platform Engineering이 익숙하지 않다면 아래 문서부터
    - kube-prometheus-stack 경량 설치
    - ServiceMonitor
    - Prometheus target / PromQL
-   - Grafana 접속 및 기본 메트릭 확인
+   - Grafana
+   - Grafana OOMKilled troubleshooting
 
-초보자에게 가장 중요한 구분은 다음입니다.
+4. **[Grafana Dashboard as Code](docs/03-grafana-dashboard-as-code.md)**
+   - RPS / 5xx / P95
+   - Pod CPU / Memory / Ready Pods
+   - ConfigMap + Grafana sidecar 기반 자동 로드
 
-```text
-Platform dependency 설치
-  Envoy Gateway
-  MetalLB
-  Metrics Server
-  Argo CD
-  Prometheus / Grafana
+5. **[Envoy Gateway Metrics](docs/04-envoy-gateway-metrics.md)**
+   - Envoy proxy `/stats/prometheus`
+   - PodMonitor
+   - Gateway RPS / latency / health
+   - Gateway vs FastAPI 비교
 
-        vs
-
-우리 서비스의 desired state
-  GatewayClass
-  Gateway
-  HTTPRoute
-  Deployment
-  Service
-  HPA
-  PDB
-```
-
-현재 Lab에서는 controller/dependency를 먼저 Helm 또는 `kubectl apply`로 bootstrap하고, 이후 애플리케이션과 Gateway resource는 Argo CD + Kustomize로 GitOps 관리합니다.
+6. **[Alerting — PrometheusRule + Alertmanager](docs/05-alerting.md)**
+   - Target Down
+   - 5xx rate
+   - P95 latency
+   - Envoy proxy down
+   - Pending / Firing / Resolved lifecycle
 
 ## 현재 구현 상태
 
 - Kubernetes v1.36.1 / Docker Desktop kind 3-node cluster
 - Envoy Gateway + Gateway API
-- MetalLB 기반 로컬 `LoadBalancer` 구현
+- MetalLB local `LoadBalancer`
 - FastAPI sample application
 - Deployment / Service / HTTPRoute
 - HPA / PDB
@@ -73,24 +61,14 @@ Platform dependency 설치
 - Argo CD automated sync / self-heal / prune
 - GitHub Actions CI
 - GHCR image registry
-- Git commit SHA 기반 immutable image deployment
-- FastAPI Prometheus `/metrics` endpoint
-- Observability values / ServiceMonitor manifest 준비
-
-현재 검증 상태:
-
-```text
-Argo CD
-platform   Synced / Healthy
-demo-app   Synced / Healthy
-
-Application Pods
-1 Pod -> desktop-worker
-1 Pod -> desktop-worker2
-
-Container Image
-ghcr.io/bokeumeom/platform-api:<git-commit-sha>
-```
+- Git commit SHA 기반 immutable deployment
+- FastAPI Prometheus `/metrics`
+- ServiceMonitor / PodMonitor
+- Prometheus + Grafana
+- Grafana Dashboard as Code
+- Envoy Gateway metrics
+- PrometheusRule
+- Alertmanager
 
 ## Architecture
 
@@ -107,47 +85,41 @@ GitHub Actions
    +-- Docker Build
    +-- Push image to GHCR
    +-- Update GitOps manifest with commit SHA
-   +-- Commit manifest change
-          |
-          v
-       Argo CD
-          |
-          | automated sync
-          v
-      Kubernetes
-          |
-          +-------------------------------+
-          |                               |
-   desktop-worker                  desktop-worker2
-    FastAPI Pod                     FastAPI Pod
-          |                               |
-          +---------------+---------------+
-                          |
-                       Service
-                          |
-                      HTTPRoute
-                          |
-                  platform-gateway
-                          |
-                    Envoy Gateway
-                          |
-                       MetalLB
+   |
+   v
+Argo CD
+   |
+   v
+Kubernetes
+   |
+   +-------------------------------+
+   |                               |
+FastAPI Pod                     FastAPI Pod
+   |                               |
+   +---------------+---------------+
+                   |
+                Service
+                   |
+               HTTPRoute
+                   |
+           Envoy Gateway
+                   |
+                MetalLB
 
-FastAPI /metrics
-      |
-      v
-ServiceMonitor
-      |
-      v
-Prometheus
-      |
-      v
-Grafana
+FastAPI /metrics  -------- ServiceMonitor ---+
+                                            |
+Envoy /stats/prometheus ---- PodMonitor -----+
+                                            v
+                                        Prometheus
+                                         /      \
+                                        v        v
+                                    Grafana   Alert rules
+                                                |
+                                                v
+                                           Alertmanager
 ```
 
 ## Platform / Application ownership model
-
-Gateway API를 이용해 플랫폼 영역과 애플리케이션 영역을 분리했습니다.
 
 ```text
 Platform Team
@@ -166,17 +138,6 @@ demo-app/
 
 `platform-gateway`는 `gateway-access=true` 라벨이 있는 Namespace의 Route만 허용합니다.
 
-```yaml
-allowedRoutes:
-  namespaces:
-    from: Selector
-    selector:
-      matchLabels:
-        gateway-access: "true"
-```
-
-Argo CD가 `demo-app` Namespace를 관리하면서 해당 라벨도 선언합니다.
-
 ## Repository structure
 
 ```text
@@ -186,122 +147,45 @@ platform-engineering-lab/
 │       └── api-ci.yaml
 ├── apps/
 │   └── api/
-│       ├── Dockerfile
-│       ├── main.py
-│       └── requirements.txt
 ├── argocd/
-│   ├── platform.yaml
-│   └── demo-app.yaml
 ├── gitops/
 │   ├── platform/
-│   │   ├── gatewayclass.yaml
-│   │   ├── gateway.yaml
-│   │   └── kustomization.yaml
-│   └── apps/
-│       └── demo-app/
-│           ├── deployment.yaml
-│           ├── service.yaml
-│           ├── httproute.yaml
-│           ├── hpa.yaml
-│           ├── pdb.yaml
-│           └── kustomization.yaml
+│   └── apps/demo-app/
 ├── observability/
 │   ├── kube-prometheus-stack-values.yaml
-│   └── demo-app-servicemonitor.yaml
+│   ├── demo-app-servicemonitor.yaml
+│   ├── demo-app-dashboard.yaml
+│   ├── envoy-proxy-podmonitor.yaml
+│   ├── envoy-gateway-dashboard.yaml
+│   └── platform-alerts.yaml
 ├── docs/
 │   ├── 00-beginner-walkthrough.md
 │   ├── 01-kubernetes-platform-lab.md
-│   └── 02-observability.md
+│   ├── 02-observability.md
+│   ├── 03-grafana-dashboard-as-code.md
+│   ├── 04-envoy-gateway-metrics.md
+│   └── 05-alerting.md
 └── metallb-config.yaml
 ```
 
-## Installation methods used in this Lab
+## Installation / Management model
 
 | Component | Installation / Management |
 |---|---|
 | Envoy Gateway | Helm |
-| Envoy quickstart | `kubectl apply -f` |
 | Metrics Server | `kubectl apply -f` |
-| MetalLB controller/speaker | `kubectl apply -f` |
-| MetalLB network config | `kubectl apply -f metallb-config.yaml` |
+| MetalLB | `kubectl apply -f` |
 | Argo CD | `kubectl apply --server-side -f` |
-| Gateway / HTTPRoute / application workload | Argo CD + Kustomize |
-| Prometheus / Grafana / Prometheus Operator | Helm (`kube-prometheus-stack`) |
-| FastAPI scrape target | ServiceMonitor |
+| Application / Gateway resources | Argo CD + Kustomize |
+| Prometheus / Grafana / Alertmanager | Helm (`kube-prometheus-stack`) |
+| FastAPI metrics discovery | ServiceMonitor |
+| Envoy proxy metrics discovery | PodMonitor |
+| Dashboards | ConfigMap / Dashboard as Code |
+| Alert rules | PrometheusRule |
 
-이 설치 과정의 정확한 명령은 [Beginner Walkthrough](docs/00-beginner-walkthrough.md)와 [Observability Guide](docs/02-observability.md)에 기록했습니다.
+## Key operational lessons
 
-## CI/CD flow
-
-FastAPI 소스 또는 workflow가 변경되면 `API CI` workflow가 실행됩니다.
-
-```text
-apps/api change
-     |
-     v
-GitHub Actions
-     |
-     +-- Buildx
-     +-- Login to GHCR with GITHUB_TOKEN
-     +-- Build / Push
-     |
-     v
-ghcr.io/bokeumeom/platform-api:<github.sha>
-     |
-     v
-Update gitops/apps/demo-app/deployment.yaml
-     |
-     v
-github-actions[bot] commit
-     |
-     v
-Argo CD detects Git desired state
-     |
-     v
-Kubernetes RollingUpdate
-```
-
-Deployment에서는 `latest` 대신 Git commit SHA를 사용합니다.
-
-```yaml
-image: ghcr.io/bokeumeom/platform-api:<commit-sha>
-```
-
-이를 통해 배포된 소스 버전을 Git에서 추적하고 재현할 수 있습니다.
-
-## Kubernetes concepts practiced
-
-이 프로젝트에서 직접 실습한 주요 항목입니다.
-
-- Cluster / Node / Pod 기본 구조
-- Deployment / Service
-- readinessProbe / livenessProbe
-- requests / limits
-- GatewayClass / Gateway / HTTPRoute
-- Namespace 기반 route ownership
-- HPA
-- PDB
-- cordon / drain / uncordon
-- taints / tolerations
-- node affinity
-- pod anti-affinity
-- topology spread constraints
-- Kustomize
-- Argo CD GitOps
-- container registry / immutable image tag
-- rolling deployment
-- Prometheus metrics exposure
-- ServiceMonitor discovery model
-
-## Key lessons
-
-### Gateway API
-
-Ingress 리소스 중심이 아니라 `GatewayClass -> Gateway -> HTTPRoute` 구조로 트래픽 관리 책임을 분리했습니다.
-
-### GitOps
-
-클러스터에 직접 `kubectl apply` 하는 대신 Git을 desired state의 기준으로 사용합니다.
+### GitOps ownership
 
 ```text
 Git = desired state
@@ -309,30 +193,9 @@ Kubernetes = actual state
 Argo CD = reconciliation
 ```
 
-### HPA and GitOps
-
-HPA가 Deployment replica 수를 변경할 수 있으므로 Argo CD가 `/spec/replicas`를 다시 덮어쓰지 않도록 설정했습니다.
-
-```yaml
-ignoreDifferences:
-  - group: apps
-    kind: Deployment
-    jsonPointers:
-      - /spec/replicas
-```
-
-### Scheduling
-
-2개의 worker node에 FastAPI Pod가 분산되도록 `topologySpreadConstraints`를 사용했습니다.
-
-```text
-desktop-worker   -> FastAPI Pod
-desktop-worker2  -> FastAPI Pod
-```
+HPA가 `Deployment.spec.replicas`를 소유하므로 Argo CD에서는 해당 필드를 ignore합니다.
 
 ### Immutable deployment
-
-CI가 만든 이미지의 Git commit SHA를 GitOps manifest에 기록합니다.
 
 ```text
 source commit
@@ -342,25 +205,52 @@ source commit
 
 ### CI writing back to Git
 
-CI가 GitOps manifest를 같은 저장소에 commit하기 때문에 workflow 실행 중 `main`이 앞서가면 non-fast-forward push가 발생할 수 있습니다. 현재 workflow는 manifest 수정 전에 최신 `main`으로 rebase하고 push 재시도를 수행하도록 보강했습니다.
+CI가 같은 저장소의 GitOps manifest를 갱신하기 때문에 concurrent commit으로 non-fast-forward push가 발생할 수 있습니다. 현재 workflow는 최신 `main`을 동기화하고 push를 재시도하도록 보강했습니다.
+
+### Resource limits are operational behavior
+
+Grafana를 256Mi memory limit으로 시작했을 때 dashboard가 추가된 뒤 실제 `OOMKilled`가 발생했습니다.
+
+```text
+port-forward disconnect
+ -> restartCount 확인
+ -> lastState.reason=OOMKilled
+ -> Helm values memory 조정
+ -> rollout 재검증
+```
+
+### Observability layers
+
+```text
+Kubernetes metrics
+        +
+FastAPI application metrics
+        +
+Envoy Gateway metrics
+        ↓
+    Prometheus
+       /   \
+      v     v
+ Grafana   Alertmanager
+```
 
 ## Learning notes
 
 - [00 — Beginner Walkthrough](docs/00-beginner-walkthrough.md)
 - [01 — Kubernetes Platform Lab Step by Step](docs/01-kubernetes-platform-lab.md)
 - [02 — Observability: Prometheus + Grafana](docs/02-observability.md)
+- [03 — Grafana Dashboard as Code](docs/03-grafana-dashboard-as-code.md)
+- [04 — Envoy Gateway Metrics](docs/04-envoy-gateway-metrics.md)
+- [05 — Alerting: PrometheusRule + Alertmanager](docs/05-alerting.md)
 
 ## Next phases
 
-현재 진행 중인 Observability 단계 이후 아래 순서로 확장할 예정입니다.
+1. OpenTelemetry traces
+2. TLS / cert-manager
+3. NetworkPolicy / RBAC / policy
+4. EKS migration
+5. Karpenter
+6. AWS Load Balancing
+7. Terraform based environment provisioning
 
-1. Envoy Gateway metrics / alert rule
-2. OpenTelemetry traces
-3. TLS / cert-manager
-4. Policy / security
-5. EKS migration
-6. Karpenter
-7. AWS Load Balancing
-8. Terraform based environment provisioning
-
-로컬 환경에서는 Kubernetes 스케줄링, GitOps, 모니터링 동작을 검증하고, 이후 EKS에서 클라우드 node provisioning과 Karpenter까지 확장하는 방향입니다.
+로컬 환경에서는 Kubernetes scheduling, GitOps, traffic management, observability와 alerting을 검증하고 이후 EKS에서 cloud-native provisioning까지 확장합니다.
