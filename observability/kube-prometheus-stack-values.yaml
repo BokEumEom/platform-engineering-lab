@@ -1,0 +1,82 @@
+# Lightweight values for the local Docker Desktop / kind lab.
+# Chart: prometheus-community/kube-prometheus-stack 90.0.0
+
+# Keep the first observability phase focused on metrics and dashboards.
+defaultRules:
+  create: false
+
+alertmanager:
+  enabled: false
+
+# These control-plane endpoints are commonly not directly reachable in a
+# Docker Desktop / kind lab. Disable them initially to avoid noisy DOWN targets.
+kubeControllerManager:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
+
+kubeEtcd:
+  enabled: false
+
+kubeProxy:
+  enabled: false
+
+grafana:
+  enabled: true
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+prometheus:
+  prometheusSpec:
+    retention: 6h
+    retentionSize: 1GB
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+
+    # Allow ServiceMonitor resources created outside this Helm release
+    # (for example in the demo-app namespace) to be discovered.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 768Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 128Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
