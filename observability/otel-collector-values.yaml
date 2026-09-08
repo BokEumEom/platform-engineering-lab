@@ -6,6 +6,11 @@ mode: deployment
 fullnameOverride: otel-collector
 replicaCount: 1
 
+# The chart requires an explicit Collector image repository.
+# Use the official Kubernetes distribution from GHCR.
+image:
+  repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s
+
 resources:
   requests:
     cpu: 50m
@@ -32,7 +37,7 @@ ports:
 
 config:
   exporters:
-    otlp/tempo:
+    otlp_grpc/tempo:
       endpoint: tempo.monitoring.svc.cluster.local:4317
       tls:
         insecure: true
@@ -46,7 +51,7 @@ config:
           - memory_limiter
           - batch
         exporters:
-          - otlp/tempo
+          - otlp_grpc/tempo
 
 serviceMonitor:
   enabled: true
