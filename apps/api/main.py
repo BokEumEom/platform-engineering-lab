@@ -8,7 +8,7 @@ app = FastAPI()
 @app.get("/")
 def root():
     return {
-        "message": "platform-engineering-lab",
+        "message": "platform-engineering-lab GitOps",
         "hostname": socket.gethostname(),
         "version": os.getenv("APP_VERSION", "v1")
     }
