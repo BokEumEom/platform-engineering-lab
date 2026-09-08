@@ -1,8 +1,8 @@
 # Platform Engineering Lab
 
-로컬 Kubernetes 환경에서 **Gateway API, GitOps, Autoscaling, Scheduling, CI/CD, Observability**를 실제로 연결해보는 Platform Engineering 학습 프로젝트입니다.
+로컬 Kubernetes 환경에서 **Gateway API, GitOps, Autoscaling, Scheduling, CI/CD, Observability, Distributed Tracing, TLS**를 실제로 연결해보는 Platform Engineering 학습 프로젝트입니다.
 
-단순히 Kubernetes 리소스를 배포하는 데서 끝내지 않고, 애플리케이션 소스 변경이 GitHub Actions와 GHCR, Argo CD를 거쳐 Kubernetes까지 자동 반영되고, Prometheus/Grafana/Alertmanager로 운영 상태를 관측하고 경보까지 검증하는 흐름을 구성합니다.
+단순히 Kubernetes 리소스를 배포하는 데서 끝내지 않고, 애플리케이션 소스 변경이 GitHub Actions와 GHCR, Argo CD를 거쳐 Kubernetes까지 자동 반영되고, Prometheus/Grafana/Alertmanager로 운영 상태를 관측하고, OpenTelemetry/Tempo로 Gateway부터 FastAPI까지 trace를 연결하며, cert-manager와 Envoy Gateway로 HTTPS까지 검증하는 흐름을 구성합니다.
 
 ## 처음 시작한다면
 
@@ -49,6 +49,26 @@ Kubernetes나 Platform Engineering이 익숙하지 않다면 아래 문서부터
    - Envoy proxy down
    - Pending / Firing / Resolved lifecycle
 
+7. **[OpenTelemetry Tracing](docs/06-opentelemetry-tracing.md)**
+   - FastAPI OpenTelemetry instrumentation
+   - OpenTelemetry Collector
+   - Tempo
+   - Trace ID direct lookup
+
+8. **[Envoy Gateway Distributed Tracing](docs/07-envoy-gateway-tracing.md)**
+   - Envoy Gateway tracing
+   - Cross-namespace OTLP backend ReferenceGrant
+   - Docker Desktop / WSL proxy
+   - Envoy ingress span → `platform-api` → `GET /`
+   - same Trace ID / parent-child 관계 runtime 검증
+
+9. **[TLS with cert-manager and Gateway API](docs/08-tls-cert-manager.md)**
+   - cert-manager v1.21.1
+   - self-signed local Certificate
+   - Gateway HTTPS listener
+   - Docker HTTPS proxy
+   - Envoy TLS termination → FastAPI runtime 검증
+
 ## 현재 구현 상태
 
 - Kubernetes v1.36.1 / Docker Desktop kind 3-node cluster
@@ -69,6 +89,53 @@ Kubernetes나 Platform Engineering이 익숙하지 않다면 아래 문서부터
 - Envoy Gateway metrics
 - PrometheusRule
 - Alertmanager
+- OpenTelemetry Collector
+- Tempo
+- FastAPI tracing
+- Envoy Gateway → FastAPI distributed tracing **runtime verified**
+- cert-manager v1.21.1
+- Gateway API HTTPS listener
+- self-signed TLS for `web.lab.local`
+- Envoy TLS termination → FastAPI **runtime verified**
+- Docker Desktop / WSL → kind MetalLB 접근을 위한 local socat proxy
+
+## Verified request paths
+
+Distributed tracing:
+
+```text
+Client
+  ↓
+Docker HTTP proxy :8080
+  ↓
+MetalLB :80
+  ↓
+Envoy Gateway ingress span
+  ↓ same Trace ID
+platform-api / GET /
+  ↓
+OpenTelemetry Collector
+  ↓
+Tempo
+  ↓
+Grafana
+```
+
+HTTPS:
+
+```text
+Client
+  ↓ HTTPS
+Docker HTTPS proxy :8443
+  ↓
+MetalLB :443
+  ↓
+Envoy Gateway
+  ↓ TLS termination
+HTTPRoute
+  ↓
+demo-app / FastAPI
+```
 
 ## Architecture
 
@@ -103,6 +170,10 @@ FastAPI Pod                     FastAPI Pod
                HTTPRoute
                    |
            Envoy Gateway
+             /          \
+        HTTP :80      HTTPS :443
+                         |
+                  cert-manager Secret
                    |
                 MetalLB
 
@@ -117,6 +188,17 @@ Envoy /stats/prometheus ---- PodMonitor -----+
                                                 |
                                                 v
                                            Alertmanager
+
+Envoy span + FastAPI span
+          |
+          v
+OpenTelemetry Collector
+          |
+          v
+        Tempo
+          |
+          v
+       Grafana
 ```
 
 ## Platform / Application ownership model
@@ -126,6 +208,8 @@ Platform Team
 platform-system/
   GatewayClass: platform-eg
   Gateway:      platform-gateway
+  Issuer
+  Certificate
 
 Application Team
 demo-app/
@@ -157,14 +241,20 @@ platform-engineering-lab/
 │   ├── demo-app-dashboard.yaml
 │   ├── envoy-proxy-podmonitor.yaml
 │   ├── envoy-gateway-dashboard.yaml
+│   ├── otel-collector-values.yaml
 │   └── platform-alerts.yaml
+├── platform/
+│   └── cert-manager-values.yaml
 ├── docs/
 │   ├── 00-beginner-walkthrough.md
 │   ├── 01-kubernetes-platform-lab.md
 │   ├── 02-observability.md
 │   ├── 03-grafana-dashboard-as-code.md
 │   ├── 04-envoy-gateway-metrics.md
-│   └── 05-alerting.md
+│   ├── 05-alerting.md
+│   ├── 06-opentelemetry-tracing.md
+│   ├── 07-envoy-gateway-tracing.md
+│   └── 08-tls-cert-manager.md
 └── metallb-config.yaml
 ```
 
@@ -178,6 +268,10 @@ platform-engineering-lab/
 | Argo CD | `kubectl apply --server-side -f` |
 | Application / Gateway resources | Argo CD + Kustomize |
 | Prometheus / Grafana / Alertmanager | Helm (`kube-prometheus-stack`) |
+| OpenTelemetry Collector | Helm |
+| Tempo | Helm |
+| cert-manager | Helm |
+| Issuer / Certificate / Gateway TLS config | Argo CD + Kustomize |
 | FastAPI metrics discovery | ServiceMonitor |
 | Envoy proxy metrics discovery | PodMonitor |
 | Dashboards | ConfigMap / Dashboard as Code |
@@ -219,19 +313,23 @@ port-forward disconnect
  -> rollout 재검증
 ```
 
+### Docker Desktop / WSL networking
+
+MetalLB External IP는 kind/Docker network 안에서 정상이어도 WSL host에서 직접 접근하면 timeout될 수 있습니다.
+
+이 Lab에서는 Docker published port를 가진 `socat` proxy로 실제 MetalLB IP를 경유합니다.
+
+```text
+localhost:8080 -> Docker proxy -> MetalLB :80
+localhost:8443 -> Docker proxy -> MetalLB :443
+```
+
 ### Observability layers
 
 ```text
-Kubernetes metrics
-        +
-FastAPI application metrics
-        +
-Envoy Gateway metrics
-        ↓
-    Prometheus
-       /   \
-      v     v
- Grafana   Alertmanager
+Metrics  -> Prometheus -> Grafana
+Alerts   -> PrometheusRule -> Alertmanager
+Traces   -> Envoy/FastAPI -> OTel Collector -> Tempo -> Grafana
 ```
 
 ## Learning notes
@@ -242,15 +340,18 @@ Envoy Gateway metrics
 - [03 — Grafana Dashboard as Code](docs/03-grafana-dashboard-as-code.md)
 - [04 — Envoy Gateway Metrics](docs/04-envoy-gateway-metrics.md)
 - [05 — Alerting: PrometheusRule + Alertmanager](docs/05-alerting.md)
+- [06 — OpenTelemetry Tracing](docs/06-opentelemetry-tracing.md)
+- [07 — Envoy Gateway + FastAPI Distributed Trace](docs/07-envoy-gateway-tracing.md)
+- [08 — TLS with cert-manager and Gateway API](docs/08-tls-cert-manager.md)
 
 ## Next phases
 
-1. OpenTelemetry traces
-2. TLS / cert-manager
-3. NetworkPolicy / RBAC / policy
+1. HTTP → HTTPS redirect enforcement
+2. NetworkPolicy / Pod Security / ResourceQuota / LimitRange
+3. Gateway policy: rate limiting / timeout / retry
 4. EKS migration
 5. Karpenter
 6. AWS Load Balancing
 7. Terraform based environment provisioning
 
-로컬 환경에서는 Kubernetes scheduling, GitOps, traffic management, observability와 alerting을 검증하고 이후 EKS에서 cloud-native provisioning까지 확장합니다.
+로컬 환경에서는 Kubernetes scheduling, GitOps, traffic management, observability, distributed tracing, TLS를 검증하고 이후 policy/security와 EKS 기반 cloud-native provisioning으로 확장합니다.
