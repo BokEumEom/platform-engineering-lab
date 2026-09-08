@@ -8,6 +8,9 @@ spec:
     - name: platform-gateway
       namespace: platform-system
       sectionName: http
+    - name: platform-gateway
+      namespace: platform-system
+      sectionName: https
 
   hostnames:
     - web.lab.local
