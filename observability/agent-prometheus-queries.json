@@ -1,0 +1,67 @@
+{
+  "demo_target_up": {
+    "component": "demo-app",
+    "signal": "target_up",
+    "query": "min(up{namespace=\"demo-app\"})"
+  },
+  "demo_request_rate_5m": {
+    "component": "demo-app",
+    "signal": "request_rate_5m",
+    "query": "sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\"}[5m]))"
+  },
+  "demo_error_ratio_5m": {
+    "component": "demo-app",
+    "signal": "error_ratio_5m",
+    "query": "sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\"}[5m])), 0.001)"
+  },
+  "demo_error_ratio_1h": {
+    "component": "demo-app",
+    "signal": "error_ratio_1h",
+    "query": "sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\"}[1h])) > 0 and sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\",status=~\"5..\"}[1h])) / clamp_min(sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\"}[1h])), 0.001) or vector(0)"
+  },
+  "demo_p95_latency_5m": {
+    "component": "demo-app",
+    "signal": "p95_latency_seconds_5m",
+    "query": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{namespace=\"demo-app\",handler!=\"/metrics\"}[5m])))"
+  },
+  "demo_ready_pods": {
+    "component": "demo-app",
+    "signal": "ready_pods",
+    "query": "sum(kube_pod_status_ready{namespace=\"demo-app\",condition=\"true\"} == 1)"
+  },
+  "demo_restarts_1h": {
+    "component": "demo-app",
+    "signal": "container_restarts_1h",
+    "query": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"demo-app\"}[1h]))"
+  },
+  "demo_hpa_current": {
+    "component": "demo-app",
+    "signal": "hpa_current_replicas",
+    "query": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"demo-app\",horizontalpodautoscaler=\"web\"}"
+  },
+  "demo_hpa_desired": {
+    "component": "demo-app",
+    "signal": "hpa_desired_replicas",
+    "query": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"demo-app\",horizontalpodautoscaler=\"web\"}"
+  },
+  "envoy_live": {
+    "component": "envoy-gateway",
+    "signal": "proxy_live",
+    "query": "min(envoy_server_live)"
+  },
+  "otel_sent_spans_5m": {
+    "component": "otel-collector",
+    "signal": "sent_spans_rate_5m",
+    "query": "sum(rate(otelcol_exporter_sent_spans[5m]))"
+  },
+  "otel_failed_spans_5m": {
+    "component": "otel-collector",
+    "signal": "failed_spans_rate_5m",
+    "query": "sum(rate(otelcol_exporter_send_failed_spans[5m]))"
+  },
+  "otel_refused_spans_5m": {
+    "component": "otel-collector",
+    "signal": "refused_spans_rate_5m",
+    "query": "sum(rate(otelcol_receiver_refused_spans[5m]))"
+  }
+}
