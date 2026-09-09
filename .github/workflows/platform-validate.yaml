@@ -74,6 +74,35 @@ jobs:
           print(f"validated Grafana dashboard JSON documents: {dashboards}")
           PY
 
+      - name: Guard zero-error SLI materialization
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          doc = yaml.safe_load(Path("observability/platform-slo-rules.yaml").read_text(encoding="utf-8"))
+          rules = {}
+          for group in doc["spec"]["groups"]:
+              for rule in group.get("rules", []):
+                  if "record" in rule:
+                      rules[rule["record"]] = str(rule.get("expr", ""))
+
+          required = [
+              "platform:http_error_ratio:5m",
+              "platform:http_error_ratio:30m",
+              "platform:http_error_ratio:1h",
+              "platform:http_error_ratio:6h",
+          ]
+          for name in required:
+              expr = rules.get(name, "")
+              if " or\n" not in expr and "\nor\n" not in expr:
+                  raise SystemExit(f"{name} must zero-fill the no-5xx case with an OR expression")
+              if "0 * sum by (platform_service)" not in expr:
+                  raise SystemExit(f"{name} must materialize zero from the request-rate label set")
+          print("zero-error SLI materialization guard passed")
+          PY
+
       - name: Render application GitOps
         run: kubectl kustomize gitops/apps/demo-app >/tmp/demo-app.yaml
 
