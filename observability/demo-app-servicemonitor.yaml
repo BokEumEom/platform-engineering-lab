@@ -4,12 +4,16 @@ metadata:
   name: demo-app
   namespace: demo-app
   labels:
-    app: web
+    app.kubernetes.io/part-of: platform-demo
 spec:
   selector:
     matchLabels:
-      app: web
+      observability: platform-demo
+  jobLabel: platform_service
+  targetLabels:
+    - platform_service
   endpoints:
     - port: http
       path: /metrics
       interval: 30s
+      scrapeTimeout: 10s
