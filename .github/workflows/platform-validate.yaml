@@ -8,6 +8,7 @@ on:
       - "observability/**"
       - "platform/**"
       - "argocd/**"
+      - "ops/**"
       - "docs/13-ops-agent-runbook.md"
       - "docs/14-operational-observability.md"
       - ".github/workflows/platform-validate.yaml"
@@ -17,6 +18,7 @@ on:
       - "observability/**"
       - "platform/**"
       - "argocd/**"
+      - "ops/**"
       - ".github/workflows/platform-validate.yaml"
   workflow_dispatch:
 
@@ -80,6 +82,26 @@ jobs:
 
       - name: Render observability GitOps
         run: kubectl kustomize observability >/tmp/observability.yaml
+
+      - name: Validate Ops benchmark shell
+        run: bash -n ops/benchmarks/orders-fault/run.sh
+
+      - name: Guard healthy default fault profile
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          text = Path("gitops/apps/demo-app/orders.yaml").read_text(encoding="utf-8")
+          for name in ("FAULT_LATENCY_MS", "FAULT_ERROR_RATE_PERCENT"):
+              match = re.search(rf'(?ms)- name: {name}\s*\n\s*value:\s*"([^"]*)"', text)
+              if not match:
+                  raise SystemExit(f"missing {name} in orders manifest")
+              if match.group(1) != "0":
+                  raise SystemExit(f"main must remain healthy: {name}={match.group(1)}")
+          print("orders fault profile defaults are healthy")
+          PY
 
       - name: Add Helm repositories
         run: |
