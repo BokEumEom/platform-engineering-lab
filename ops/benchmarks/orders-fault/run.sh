@@ -167,8 +167,37 @@ from pathlib import Path
 
 review = json.loads(Path(sys.argv[1]).read_text())
 print(f"state={review.get('state')} release_guidance={review.get('release_guidance')}")
+missing = review.get("evidence", {}).get("missing_required", [])
+if missing:
+    print("  missing_required:")
+    for ref in missing:
+        print(f"    - {ref}")
 for finding in review.get("findings", []):
     print(f"  {finding.get('severity')} {finding.get('id')}: {finding.get('observation')}")
+PY
+}
+
+baseline_healthy() {
+  local review="${RUN_DIR}/baseline-review.json"
+  [[ -f "${review}" ]] || return 1
+  "${PYTHON_BIN}" - "${review}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+review = json.loads(Path(sys.argv[1]).read_text())
+missing = review.get("evidence", {}).get("missing_required", [])
+blocking = [f for f in review.get("findings", []) if f.get("severity") in {"P0", "P1"}]
+healthy = review.get("state") == "healthy" and not missing and not blocking
+if not healthy:
+    print("BASELINE GATE FAILED")
+    print(f"  state={review.get('state')}")
+    print(f"  missing_required={missing}")
+    if blocking:
+        print("  blocking_findings:")
+        for finding in blocking:
+            print(f"    - {finding.get('severity')} {finding.get('id')}: {finding.get('observation')}")
+raise SystemExit(0 if healthy else 1)
 PY
 }
 
@@ -287,12 +316,13 @@ DRY RUN ONLY
 
 This benchmark will:
   1. capture baseline Kubernetes + Prometheus evidence;
-  2. commit/push orders fault injection to main;
-  3. wait for Argo CD reconciliation and generate Gateway traffic;
-  4. run the Infrastructure Engineering Agent Ops review;
-  5. commit/push remediation (FAULT_* back to zero);
-  6. collect fresh evidence until P0/P1 symptoms clear;
-  7. run ops-compare and require verified_recovery=true.
+  2. require a healthy and complete baseline before any fault mutation;
+  3. commit/push orders fault injection to main;
+  4. wait for Argo CD reconciliation and generate Gateway traffic;
+  5. run the Infrastructure Engineering Agent Ops review;
+  6. commit/push remediation (FAULT_* back to zero);
+  7. collect fresh evidence until P0/P1 symptoms clear;
+  8. run ops-compare and require verified_recovery=true.
 
 Requested fault:
   FAULT_LATENCY_MS=${FAULT_LATENCY_MS}
@@ -313,6 +343,11 @@ EOF
 
   generate_traffic 20
   collect_stage baseline
+  if ! baseline_healthy; then
+    write_metadata
+    fail "baseline evidence is not healthy and complete; no fault was injected. Inspect ${RUN_DIR}/baseline-review.json and baseline-prometheus.json"
+  fi
+  log "baseline gate passed: healthy evidence confirmed"
 
   log "injecting controlled orders fault through GitOps"
   set_orders_fault "${FAULT_LATENCY_MS}" "${FAULT_ERROR_RATE_PERCENT}"
