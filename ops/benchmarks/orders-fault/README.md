@@ -51,7 +51,7 @@ The script does not use `kubectl set env`, restart-first remediation, or direct 
 ```bash
 cd ~/platform-engineering-lab
 
-ops/benchmarks/orders-fault/run.sh
+bash ops/benchmarks/orders-fault/run.sh
 ```
 
 This prints the planned mutation and exits.
@@ -62,7 +62,7 @@ This prints the planned mutation and exits.
 cd ~/platform-engineering-lab
 
 OPS_BENCHMARK_ACK=platform-engineering-lab \
-  ops/benchmarks/orders-fault/run.sh --execute
+  bash ops/benchmarks/orders-fault/run.sh --execute
 ```
 
 If the Harness repository is elsewhere:
@@ -70,7 +70,7 @@ If the Harness repository is elsewhere:
 ```bash
 HARNESS_DIR=/path/to/infrastructure-engineering-harness \
 OPS_BENCHMARK_ACK=platform-engineering-lab \
-  ops/benchmarks/orders-fault/run.sh --execute
+  bash ops/benchmarks/orders-fault/run.sh --execute
 ```
 
 ## Evidence artifacts
