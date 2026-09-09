@@ -117,12 +117,12 @@
   "otel_failed_spans_5m": {
     "component": "otel-collector",
     "signal": "failed_spans_rate_5m",
-    "query": "sum(rate(otelcol_exporter_send_failed_spans_total[5m])) or sum(rate(otelcol_exporter_send_failed_spans[5m]))"
+    "query": "sum(rate(otelcol_exporter_send_failed_spans_total[5m])) or sum(rate(otelcol_exporter_send_failed_spans[5m])) or vector(0)"
   },
   "otel_refused_spans_5m": {
     "component": "otel-collector",
     "signal": "refused_spans_rate_5m",
-    "query": "sum(rate(otelcol_receiver_refused_spans_total[5m])) or sum(rate(otelcol_receiver_refused_spans[5m]))"
+    "query": "sum(rate(otelcol_receiver_refused_spans_total[5m])) or sum(rate(otelcol_receiver_refused_spans[5m])) or vector(0)"
   },
   "firing_alerts": {
     "component": "alerting",
