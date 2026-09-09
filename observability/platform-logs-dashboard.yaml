@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-logs-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  platform-logs.json: |-
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 1,
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "Log Volume by App",
+          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 0},
+          "fieldConfig": {"defaults": {"unit": "ops", "min": 0}},
+          "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "sum by (app) (count_over_time({namespace=~\"$namespace\",app=~\"$app\"}[5m]))", "legendFormat": "{{app}}"}]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Application Error Logs",
+          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 0},
+          "fieldConfig": {"defaults": {"unit": "ops", "min": 0}},
+          "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "sum by (app) (count_over_time({namespace=\"demo-app\"} |= \"\\\"level\\\":\\\"error\\\"\" [5m]))", "legendFormat": "{{app}}"}]
+        },
+        {
+          "id": 3,
+          "type": "logs",
+          "title": "Structured Application Logs",
+          "gridPos": {"h": 12, "w": 16, "x": 0, "y": 7},
+          "options": {"showTime": true, "showLabels": false, "wrapLogMessage": true, "enableLogDetails": true},
+          "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "{namespace=~\"$namespace\",app=~\"$app\"} | json"}]
+        },
+        {
+          "id": 4,
+          "type": "logs",
+          "title": "Kubernetes Cluster Events",
+          "gridPos": {"h": 12, "w": 8, "x": 16, "y": 7},
+          "options": {"showTime": true, "showLabels": true, "wrapLogMessage": true, "enableLogDetails": true},
+          "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "{job=\"integrations/kubernetes/eventhandler\"}"}]
+        },
+        {
+          "id": 5,
+          "type": "logs",
+          "title": "Only Error Requests · platform-demo",
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 19},
+          "options": {"showTime": true, "showLabels": false, "wrapLogMessage": true, "enableLogDetails": true},
+          "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "{namespace=\"demo-app\"} | json | level=\"error\""}]
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["logs", "loki", "operations"],
+      "templating": {
+        "list": [
+          {
+            "name": "namespace",
+            "label": "Namespace",
+            "type": "query",
+            "datasource": {"type": "loki", "uid": "loki"},
+            "query": "label_values(namespace)",
+            "current": {"text": "demo-app", "value": "demo-app"},
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true,
+            "refresh": 1
+          },
+          {
+            "name": "app",
+            "label": "App",
+            "type": "query",
+            "datasource": {"type": "loki", "uid": "loki"},
+            "query": "label_values({namespace=~\"$namespace\"}, app)",
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true,
+            "refresh": 1
+          }
+        ]
+      },
+      "time": {"from": "now-1h", "to": "now"},
+      "timezone": "browser",
+      "title": "Platform Operations · Logs & Events",
+      "uid": "platform-operations-logs",
+      "version": 1
+    }
