@@ -23,3 +23,21 @@ spec:
   privateKey:
     algorithm: ECDSA
     size: 256
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lab-local-wildcard
+  namespace: platform-system
+spec:
+  secretName: lab-local-wildcard-tls
+  duration: 2160h
+  renewBefore: 360h
+  issuerRef:
+    name: lab-selfsigned
+    kind: Issuer
+  dnsNames:
+    - "*.lab.local"
+  privateKey:
+    algorithm: ECDSA
+    size: 256
