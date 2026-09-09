@@ -1,8 +1,9 @@
-# Lightweight values for the local Docker Desktop / kind lab.
+# Operationally-oriented values for the local Docker Desktop / kind environment.
 # Chart: prometheus-community/kube-prometheus-stack 90.0.0
+#
+# This is still a local lab: retention is longer than the original learning
+# profile, but persistence remains disabled until storage evidence is reviewed.
 
-# Keep upstream default rules disabled so this lab can learn from a small,
-# explicit set of application/platform alerts first.
 defaultRules:
   create: false
 
@@ -15,6 +16,7 @@ alertmanager:
       group_by:
         - alertname
         - namespace
+        - service
       group_wait: 30s
       group_interval: 5m
       repeat_interval: 1h
@@ -22,7 +24,7 @@ alertmanager:
     receivers:
       - name: "null"
   alertmanagerSpec:
-    retention: 6h
+    retention: 24h
     resources:
       requests:
         cpu: 25m
@@ -32,7 +34,8 @@ alertmanager:
         memory: 192Mi
 
 # These control-plane endpoints are commonly not directly reachable in a
-# Docker Desktop / kind lab. Disable them initially to avoid noisy DOWN targets.
+# Docker Desktop / kind lab. Keep them disabled until a live evidence review
+# proves that scraping them is reliable in this cluster.
 kubeControllerManager:
   enabled: false
 
@@ -49,6 +52,10 @@ grafana:
   enabled: true
   persistence:
     enabled: false
+  grafana.ini:
+    server:
+      domain: grafana.lab.local
+      root_url: https://grafana.lab.local
   sidecar:
     dashboards:
       enabled: true
@@ -83,22 +90,17 @@ prometheusOperator:
 
 prometheus:
   prometheusSpec:
-    retention: 6h
-    retentionSize: 1GB
+    retention: 24h
+    retentionSize: 2GB
     scrapeInterval: 30s
     evaluationInterval: 30s
 
-    # Allow ServiceMonitor resources created outside this Helm release
-    # (for example in the demo-app namespace) to be discovered.
     serviceMonitorSelectorNilUsesHelmValues: false
     serviceMonitorNamespaceSelector: {}
 
-    # Envoy Gateway exposes proxy metrics through PodMonitor.
     podMonitorSelectorNilUsesHelmValues: false
     podMonitorNamespaceSelector: {}
 
-    # Allow our standalone PrometheusRule resources to be discovered without
-    # requiring the Helm release label.
     ruleSelectorNilUsesHelmValues: false
     ruleSelector: {}
     ruleNamespaceSelector: {}
