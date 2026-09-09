@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - demo-app-servicemonitor.yaml
+  - demo-app-dashboard.yaml
+  - envoy-proxy-podmonitor.yaml
+  - envoy-gateway-dashboard.yaml
+  - platform-alerts.yaml
+  - platform-slo-rules.yaml
+  - platform-operations-dashboard.yaml
+  - kubernetes-operations-dashboard.yaml
+  - platform-logs-dashboard.yaml
