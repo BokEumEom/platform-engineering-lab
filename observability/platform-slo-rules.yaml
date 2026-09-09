@@ -1,0 +1,201 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-service-slo
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: platform-engineering-lab
+spec:
+  groups:
+    - name: platform-service.sli
+      interval: 30s
+      rules:
+        - record: platform:http_requests:rate5m
+          expr: |
+            sum by (platform_service) (
+              rate(http_requests_total{
+                namespace="demo-app",
+                handler!="/metrics",
+                handler!~"/health/.*"
+              }[5m])
+            )
+
+        - record: platform:http_errors:rate5m
+          expr: |
+            sum by (platform_service) (
+              rate(http_requests_total{
+                namespace="demo-app",
+                handler!="/metrics",
+                handler!~"/health/.*",
+                status=~"5.."
+              }[5m])
+            )
+
+        - record: platform:http_error_ratio:5m
+          expr: |
+            sum by (platform_service) (
+              rate(http_requests_total{
+                namespace="demo-app",
+                handler!="/metrics",
+                handler!~"/health/.*",
+                status=~"5.."
+              }[5m])
+            )
+            /
+            clamp_min(
+              sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*"
+                }[5m])
+              ),
+              0.001
+            )
+
+        - record: platform:http_error_ratio:30m
+          expr: |
+            sum by (platform_service) (
+              rate(http_requests_total{
+                namespace="demo-app",
+                handler!="/metrics",
+                handler!~"/health/.*",
+                status=~"5.."
+              }[30m])
+            )
+            /
+            clamp_min(
+              sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*"
+                }[30m])
+              ),
+              0.001
+            )
+
+        - record: platform:http_error_ratio:1h
+          expr: |
+            sum by (platform_service) (
+              rate(http_requests_total{
+                namespace="demo-app",
+                handler!="/metrics",
+                handler!~"/health/.*",
+                status=~"5.."
+              }[1h])
+            )
+            /
+            clamp_min(
+              sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*"
+                }[1h])
+              ),
+              0.001
+            )
+
+        - record: platform:http_error_ratio:6h
+          expr: |
+            sum by (platform_service) (
+              rate(http_requests_total{
+                namespace="demo-app",
+                handler!="/metrics",
+                handler!~"/health/.*",
+                status=~"5.."
+              }[6h])
+            )
+            /
+            clamp_min(
+              sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*"
+                }[6h])
+              ),
+              0.001
+            )
+
+        - record: platform:http_p95_latency_seconds:5m
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (platform_service, le) (
+                rate(http_request_duration_seconds_bucket{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*"
+                }[5m])
+              )
+            )
+
+        - record: platform:slo_availability_ratio:5m
+          expr: 1 - platform:http_error_ratio:5m
+
+        - record: platform:slo_availability_ratio:1h
+          expr: 1 - platform:http_error_ratio:1h
+
+        # Lab operating policy: 99.9% availability for the public platform-api.
+        # Error budget = 0.001. This is an explicit exercise policy, not a
+        # production recommendation for another service.
+        - record: platform:slo_burn_rate:5m
+          expr: platform:http_error_ratio:5m / 0.001
+
+        - record: platform:slo_burn_rate:30m
+          expr: platform:http_error_ratio:30m / 0.001
+
+        - record: platform:slo_burn_rate:1h
+          expr: platform:http_error_ratio:1h / 0.001
+
+        - record: platform:slo_burn_rate:6h
+          expr: platform:http_error_ratio:6h / 0.001
+
+        - record: platform:slo_error_budget_remaining:6h
+          expr: clamp_min(1 - (platform:http_error_ratio:6h / 0.001), 0)
+
+    - name: platform-service.slo-alerts
+      rules:
+        - alert: PlatformApiFastErrorBudgetBurn
+          expr: |
+            platform:slo_burn_rate:5m{platform_service="platform-api"} > 14.4
+            and on (platform_service)
+            platform:slo_burn_rate:1h{platform_service="platform-api"} > 14.4
+          for: 2m
+          labels:
+            severity: critical
+            service: platform-api
+            slo: availability
+          annotations:
+            summary: "platform-api is rapidly consuming its availability error budget"
+            description: "Both 5m and 1h burn rates are above 14.4x for the lab 99.9% availability objective."
+            runbook_url: "https://github.com/BokEumEom/platform-engineering-lab/blob/main/docs/13-ops-agent-runbook.md"
+
+        - alert: PlatformApiSlowErrorBudgetBurn
+          expr: |
+            platform:slo_burn_rate:30m{platform_service="platform-api"} > 6
+            and on (platform_service)
+            platform:slo_burn_rate:6h{platform_service="platform-api"} > 6
+          for: 5m
+          labels:
+            severity: warning
+            service: platform-api
+            slo: availability
+          annotations:
+            summary: "platform-api is steadily consuming its availability error budget"
+            description: "Both 30m and 6h burn rates are above 6x for the lab 99.9% availability objective."
+            runbook_url: "https://github.com/BokEumEom/platform-engineering-lab/blob/main/docs/13-ops-agent-runbook.md"
+
+        - alert: PlatformDependencyHighErrorRatio
+          expr: |
+            platform:http_error_ratio:5m{platform_service=~"catalog-service|orders-service"} > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            service: platform-demo-dependency
+          annotations:
+            summary: "a platform demo dependency has more than 5% 5xx responses"
+            description: "Inspect service-level metrics, traces and structured logs before changing scaling or restart policy."
+            runbook_url: "https://github.com/BokEumEom/platform-engineering-lab/blob/main/docs/13-ops-agent-runbook.md"
