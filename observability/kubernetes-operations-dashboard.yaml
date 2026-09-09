@@ -1,0 +1,155 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubernetes-operations-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  kubernetes-operations.json: |-
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 1,
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Ready Nodes",
+          "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+          "fieldConfig": {"defaults": {"decimals": 0}},
+          "targets": [{"refId": "A", "expr": "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"} == 1)"}]
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Pending Pods",
+          "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+          "fieldConfig": {"defaults": {"decimals": 0}},
+          "targets": [{"refId": "A", "expr": "sum(kube_pod_status_phase{phase=\"Pending\"} == 1)"}]
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Unavailable Deployment Replicas",
+          "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+          "fieldConfig": {"defaults": {"decimals": 0}},
+          "targets": [{"refId": "A", "expr": "sum(kube_deployment_status_replicas_unavailable) or vector(0)"}]
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "OOMKilled Containers",
+          "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+          "fieldConfig": {"defaults": {"decimals": 0}},
+          "targets": [{"refId": "A", "expr": "sum(kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"}) or vector(0)"}]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Node CPU Utilization",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}},
+          "targets": [{"refId": "A", "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "legendFormat": "{{instance}}"}]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Node Memory Utilization",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}},
+          "targets": [{"refId": "A", "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "{{instance}}"}]
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "Running Pods by Node",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 13},
+          "fieldConfig": {"defaults": {"decimals": 0, "min": 0}},
+          "targets": [{"refId": "A", "expr": "sum by (node) (kube_pod_info * on(namespace,pod) group_left() (kube_pod_status_phase{phase=\"Running\"} == 1))", "legendFormat": "{{node}}"}]
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "Container Restarts · 1h by Namespace",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 13},
+          "fieldConfig": {"defaults": {"decimals": 0, "min": 0}},
+          "targets": [{"refId": "A", "expr": "sum by (namespace) (increase(kube_pod_container_status_restarts_total[1h]))", "legendFormat": "{{namespace}}"}]
+        },
+        {
+          "id": 9,
+          "type": "timeseries",
+          "title": "PDB Disruptions Allowed",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 13},
+          "fieldConfig": {"defaults": {"decimals": 0, "min": 0}},
+          "targets": [{"refId": "A", "expr": "kube_poddisruptionbudget_status_pod_disruptions_allowed{namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{poddisruptionbudget}}"}]
+        },
+        {
+          "id": 10,
+          "type": "timeseries",
+          "title": "HPA Saturation",
+          "description": "1.0 means desired replicas have reached configured max replicas.",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 21},
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}},
+          "targets": [{"refId": "A", "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"$namespace\"} / clamp_min(kube_horizontalpodautoscaler_spec_max_replicas{namespace=~\"$namespace\"}, 1)", "legendFormat": "{{namespace}}/{{horizontalpodautoscaler}}"}]
+        },
+        {
+          "id": 11,
+          "type": "timeseries",
+          "title": "Namespace CPU Usage",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 21},
+          "fieldConfig": {"defaults": {"unit": "cores", "min": 0}},
+          "targets": [{"refId": "A", "expr": "sum by (namespace) (rate(container_cpu_usage_seconds_total{container!=\"\",image!=\"\"}[5m]))", "legendFormat": "{{namespace}}"}]
+        },
+        {
+          "id": 12,
+          "type": "timeseries",
+          "title": "Namespace Working Set Memory",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 29},
+          "fieldConfig": {"defaults": {"unit": "bytes", "min": 0}},
+          "targets": [{"refId": "A", "expr": "sum by (namespace) (container_memory_working_set_bytes{container!=\"\",image!=\"\"})", "legendFormat": "{{namespace}}"}]
+        },
+        {
+          "id": 13,
+          "type": "timeseries",
+          "title": "Deployment Ready / Desired",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 29},
+          "fieldConfig": {"defaults": {"min": 0, "decimals": 0}},
+          "targets": [
+            {"refId": "A", "expr": "kube_deployment_status_replicas_ready{namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{deployment}} ready"},
+            {"refId": "B", "expr": "kube_deployment_spec_replicas{namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{deployment}} desired"}
+          ]
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["kubernetes", "operations", "capacity"],
+      "templating": {
+        "list": [
+          {
+            "name": "namespace",
+            "label": "Namespace",
+            "type": "query",
+            "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+            "query": {"query": "label_values(kube_pod_info, namespace)", "refId": "namespace-variable"},
+            "current": {"text": "demo-app", "value": "demo-app"},
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true,
+            "refresh": 1
+          },
+          {
+            "name": "DS_PROMETHEUS",
+            "label": "Prometheus",
+            "type": "datasource",
+            "query": "prometheus",
+            "refresh": 1
+          }
+        ]
+      },
+      "time": {"from": "now-6h", "to": "now"},
+      "timezone": "browser",
+      "title": "Kubernetes Operations · Capacity & Reliability",
+      "uid": "kubernetes-operations-capacity",
+      "version": 1
+    }
