@@ -7,6 +7,7 @@ on:
       - "gitops/**"
       - "observability/**"
       - "platform/**"
+      - "argocd/**"
       - "docs/13-ops-agent-runbook.md"
       - "docs/14-operational-observability.md"
       - ".github/workflows/platform-validate.yaml"
@@ -15,6 +16,7 @@ on:
       - "gitops/**"
       - "observability/**"
       - "platform/**"
+      - "argocd/**"
       - ".github/workflows/platform-validate.yaml"
   workflow_dispatch:
 
@@ -49,7 +51,7 @@ jobs:
           from pathlib import Path
           import yaml
 
-          roots = [Path("gitops"), Path("observability"), Path("platform")]
+          roots = [Path("gitops"), Path("observability"), Path("platform"), Path("argocd")]
           count = 0
           dashboards = 0
           for root in roots:
@@ -75,6 +77,9 @@ jobs:
 
       - name: Render platform GitOps
         run: kubectl kustomize gitops/platform >/tmp/platform.yaml
+
+      - name: Render observability GitOps
+        run: kubectl kustomize observability >/tmp/observability.yaml
 
       - name: Add Helm repositories
         run: |
