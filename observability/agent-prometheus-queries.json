@@ -1,28 +1,83 @@
 {
-  "demo_target_up": {
-    "component": "demo-app",
+  "platform_api_target_up": {
+    "component": "platform-api",
     "signal": "target_up",
-    "query": "min(up{namespace=\"demo-app\"})"
+    "query": "min(up{namespace=\"demo-app\",platform_service=\"platform-api\"})"
   },
-  "demo_request_rate_5m": {
-    "component": "demo-app",
+  "catalog_target_up": {
+    "component": "catalog-service",
+    "signal": "target_up",
+    "query": "min(up{namespace=\"demo-app\",platform_service=\"catalog-service\"})"
+  },
+  "orders_target_up": {
+    "component": "orders-service",
+    "signal": "target_up",
+    "query": "min(up{namespace=\"demo-app\",platform_service=\"orders-service\"})"
+  },
+  "platform_api_request_rate_5m": {
+    "component": "platform-api",
     "signal": "request_rate_5m",
-    "query": "sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\"}[5m]))"
+    "query": "platform:http_requests:rate5m{platform_service=\"platform-api\"}"
   },
-  "demo_error_ratio_5m": {
-    "component": "demo-app",
+  "catalog_request_rate_5m": {
+    "component": "catalog-service",
+    "signal": "request_rate_5m",
+    "query": "platform:http_requests:rate5m{platform_service=\"catalog-service\"}"
+  },
+  "orders_request_rate_5m": {
+    "component": "orders-service",
+    "signal": "request_rate_5m",
+    "query": "platform:http_requests:rate5m{platform_service=\"orders-service\"}"
+  },
+  "platform_api_error_ratio_5m": {
+    "component": "platform-api",
     "signal": "error_ratio_5m",
-    "query": "sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\"}[5m])), 0.001)"
+    "query": "platform:http_error_ratio:5m{platform_service=\"platform-api\"}"
   },
-  "demo_error_ratio_1h": {
-    "component": "demo-app",
+  "platform_api_error_ratio_1h": {
+    "component": "platform-api",
     "signal": "error_ratio_1h",
-    "query": "sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\",status=~\"5..\"}[1h])) / clamp_min(sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\"}[1h])), 0.001)"
+    "query": "platform:http_error_ratio:1h{platform_service=\"platform-api\"}"
   },
-  "demo_p95_latency_5m": {
-    "component": "demo-app",
+  "catalog_error_ratio_5m": {
+    "component": "catalog-service",
+    "signal": "error_ratio_5m",
+    "query": "platform:http_error_ratio:5m{platform_service=\"catalog-service\"}"
+  },
+  "orders_error_ratio_5m": {
+    "component": "orders-service",
+    "signal": "error_ratio_5m",
+    "query": "platform:http_error_ratio:5m{platform_service=\"orders-service\"}"
+  },
+  "platform_api_p95_latency_5m": {
+    "component": "platform-api",
     "signal": "p95_latency_seconds_5m",
-    "query": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{namespace=\"demo-app\",handler!=\"/metrics\"}[5m])))"
+    "query": "platform:http_p95_latency_seconds:5m{platform_service=\"platform-api\"}"
+  },
+  "catalog_p95_latency_5m": {
+    "component": "catalog-service",
+    "signal": "p95_latency_seconds_5m",
+    "query": "platform:http_p95_latency_seconds:5m{platform_service=\"catalog-service\"}"
+  },
+  "orders_p95_latency_5m": {
+    "component": "orders-service",
+    "signal": "p95_latency_seconds_5m",
+    "query": "platform:http_p95_latency_seconds:5m{platform_service=\"orders-service\"}"
+  },
+  "platform_api_burn_rate_5m": {
+    "component": "platform-api",
+    "signal": "slo_burn_rate_5m",
+    "query": "platform:slo_burn_rate:5m{platform_service=\"platform-api\"}"
+  },
+  "platform_api_burn_rate_1h": {
+    "component": "platform-api",
+    "signal": "slo_burn_rate_1h",
+    "query": "platform:slo_burn_rate:1h{platform_service=\"platform-api\"}"
+  },
+  "platform_api_error_budget_remaining_6h": {
+    "component": "platform-api",
+    "signal": "error_budget_remaining_6h",
+    "query": "platform:slo_error_budget_remaining:6h{platform_service=\"platform-api\"}"
   },
   "demo_ready_pods": {
     "component": "demo-app",
@@ -34,15 +89,20 @@
     "signal": "container_restarts_1h",
     "query": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"demo-app\"}[1h]))"
   },
-  "demo_hpa_current": {
+  "demo_hpa_saturation": {
     "component": "demo-app",
-    "signal": "hpa_current_replicas",
-    "query": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"demo-app\",horizontalpodautoscaler=\"web\"}"
+    "signal": "hpa_saturation",
+    "query": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"demo-app\"} / clamp_min(kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"demo-app\"}, 1))"
   },
-  "demo_hpa_desired": {
-    "component": "demo-app",
-    "signal": "hpa_desired_replicas",
-    "query": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"demo-app\",horizontalpodautoscaler=\"web\"}"
+  "pending_pods": {
+    "component": "kubernetes",
+    "signal": "pending_pods",
+    "query": "sum(kube_pod_status_phase{phase=\"Pending\"} == 1)"
+  },
+  "oomkilled_containers": {
+    "component": "kubernetes",
+    "signal": "oomkilled_containers",
+    "query": "sum(kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"}) or vector(0)"
   },
   "envoy_live": {
     "component": "envoy-gateway",
@@ -63,5 +123,10 @@
     "component": "otel-collector",
     "signal": "refused_spans_rate_5m",
     "query": "sum(rate(otelcol_receiver_refused_spans[5m]))"
+  },
+  "firing_alerts": {
+    "component": "alerting",
+    "signal": "firing_alerts",
+    "query": "count(ALERTS{alertstate=\"firing\"}) or vector(0)"
   }
 }
