@@ -124,9 +124,9 @@ Target signal model:
 
 ## 3. Priority P0 — make the Agent evidence-driven
 
-Use `infrastructure-engineering-harness` to collect live Kubernetes evidence before making operational claims.
+The Harness now has two read-only live evidence adapters for this environment.
 
-Example:
+### Kubernetes runtime evidence
 
 ```bash
 cd ~/infrastructure-engineering-harness
@@ -138,9 +138,50 @@ git pull
   --output /tmp/platform-lab-k8s-evidence.json
 ```
 
-The evidence should be reviewed together with this repository's Git desired state.
+This captures node/Pod health, warning events, Namespace policy, Deployment/HPA/PDB/NetworkPolicy state, Gateway API state, Argo CD status and Metrics Server usage when available.
 
-The next Harness integration should add a Prometheus evidence adapter so live Kubernetes state and service-level metrics can be evaluated in one review.
+### Prometheus service evidence
+
+First expose Prometheus locally. Resolve the actual Service name rather than assuming it:
+
+```bash
+kubectl get svc -n monitoring | grep prometheus
+```
+
+Then port-forward the Prometheus Service to local port 9090.
+
+Example shape:
+
+```bash
+kubectl port-forward \
+  -n monitoring \
+  svc/<prometheus-service-name> \
+  9090:9090
+```
+
+From another terminal in `infrastructure-engineering-harness`:
+
+```bash
+./agent prometheus-evidence \
+  --url http://127.0.0.1:9090 \
+  --query-file ../platform-engineering-lab/observability/agent-prometheus-queries.json \
+  --namespace demo-app \
+  --service platform-api \
+  --output /tmp/platform-lab-prometheus-evidence.json
+```
+
+The checked-in query profile currently covers:
+
+- demo-app target health;
+- request rate;
+- 5-minute and 1-hour 5xx ratio;
+- P95 latency;
+- Ready Pods and restarts;
+- HPA current/desired replicas;
+- Envoy live status;
+- OpenTelemetry Collector sent/failed/refused span rates.
+
+These evidence files should be reviewed together with this repository's Git desired state. Adapter results remain observations with provenance; they do not independently prove healthy operation or successful remediation.
 
 ## 4. Priority P0 — logs and Kubernetes events
 
@@ -346,8 +387,8 @@ Recommended order from here:
 
 ```text
 1. Kubernetes live evidence adapter                         DONE in Harness
-2. Run first live K8s evidence collection                  NEXT
-3. Prometheus evidence adapter                             NEXT
+2. Prometheus live evidence adapter                         DONE in Harness
+3. Run first combined K8s + Prometheus evidence review     NEXT
 4. Loki + Alloy Pod logs + Kubernetes Events
 5. SLI recording rules
 6. synthetic HTTPS probe
