@@ -4,6 +4,8 @@
 
 단순히 Kubernetes 리소스를 배포하는 데서 끝내지 않고, 애플리케이션 소스 변경이 GitHub Actions와 GHCR, Argo CD를 거쳐 Kubernetes까지 자동 반영되고, Prometheus/Grafana/Alertmanager로 운영 상태를 관측하고, OpenTelemetry/Tempo로 Gateway부터 FastAPI까지 trace를 연결하며, cert-manager와 Envoy Gateway로 HTTPS까지 검증하는 흐름을 구성합니다.
 
+최근 단계에서는 `infrastructure-engineering-harness`의 Architecture / SRE / Security review 원칙을 적용해 기능 추가보다 운영 안전성, 증거 기반 튜닝, 권한 최소화와 회귀 검증을 우선합니다.
+
 ## 처음 시작한다면
 
 Kubernetes나 Platform Engineering이 익숙하지 않다면 아래 문서부터 순서대로 보는 것을 권장합니다.
@@ -69,6 +71,18 @@ Kubernetes나 Platform Engineering이 익숙하지 않다면 아래 문서부터
    - Docker HTTPS proxy
    - Envoy TLS termination → FastAPI runtime 검증
 
+10. **[HTTP to HTTPS Redirect](docs/09-http-to-https-redirect.md)**
+    - HTTP listener redirect 전용 분리
+    - HTTPS listener application route 전용 분리
+    - Gateway API `RequestRedirect`
+
+11. **[Infrastructure Engineering Harness Review](docs/10-infrastructure-engineering-harness-review.md)**
+    - Architecture / SRE / Security review
+    - evidence boundary
+    - workload privilege hardening
+    - Pod Security Admission
+    - NetworkPolicy / capacity / supply-chain 후속 과제
+
 ## 현재 구현 상태
 
 - Kubernetes v1.36.1 / Docker Desktop kind 3-node cluster
@@ -98,6 +112,9 @@ Kubernetes나 Platform Engineering이 익숙하지 않다면 아래 문서부터
 - self-signed TLS for `web.lab.local`
 - Envoy TLS termination → FastAPI **runtime verified**
 - Docker Desktop / WSL → kind MetalLB 접근을 위한 local socat proxy
+- HTTP → HTTPS redirect desired state **runtime verification pending**
+- dedicated demo-app ServiceAccount / API token automount disabled **runtime verification pending**
+- Restricted Pod Security workload hardening **runtime verification pending**
 
 ## Verified request paths
 
@@ -106,9 +123,9 @@ Distributed tracing:
 ```text
 Client
   ↓
-Docker HTTP proxy :8080
+Docker HTTP/HTTPS proxy
   ↓
-MetalLB :80
+MetalLB
   ↓
 Envoy Gateway ingress span
   ↓ same Trace ID
@@ -172,10 +189,10 @@ FastAPI Pod                     FastAPI Pod
            Envoy Gateway
              /          \
         HTTP :80      HTTPS :443
-                         |
-                  cert-manager Secret
-                   |
-                MetalLB
+          |               |
+       Redirect      cert-manager Secret
+                          |
+                       MetalLB
 
 FastAPI /metrics  -------- ServiceMonitor ---+
                                             |
@@ -213,6 +230,7 @@ platform-system/
 
 Application Team
 demo-app/
+  ServiceAccount
   Deployment
   Service
   HTTPRoute
@@ -221,6 +239,8 @@ demo-app/
 ```
 
 `platform-gateway`는 `gateway-access=true` 라벨이 있는 Namespace의 Route만 허용합니다.
+
+`demo-app` namespace는 Argo CD `managedNamespaceMetadata`로 Gateway access와 Pod Security labels를 관리합니다.
 
 ## Repository structure
 
@@ -254,7 +274,9 @@ platform-engineering-lab/
 │   ├── 05-alerting.md
 │   ├── 06-opentelemetry-tracing.md
 │   ├── 07-envoy-gateway-tracing.md
-│   └── 08-tls-cert-manager.md
+│   ├── 08-tls-cert-manager.md
+│   ├── 09-http-to-https-redirect.md
+│   └── 10-infrastructure-engineering-harness-review.md
 └── metallb-config.yaml
 ```
 
@@ -288,6 +310,15 @@ Argo CD = reconciliation
 ```
 
 HPA가 `Deployment.spec.replicas`를 소유하므로 Argo CD에서는 해당 필드를 ignore합니다.
+
+### Evidence before tuning
+
+`infrastructure-engineering-harness` 리뷰 원칙에 따라 HPA threshold, requests/limits, ResourceQuota 같은 수치는 현재 workload evidence 없이 임의 조정하지 않습니다.
+
+```text
+Repository desired state != runtime evidence
+Agent recommendation   != verified outcome
+```
 
 ### Immutable deployment
 
@@ -343,15 +374,20 @@ Traces   -> Envoy/FastAPI -> OTel Collector -> Tempo -> Grafana
 - [06 — OpenTelemetry Tracing](docs/06-opentelemetry-tracing.md)
 - [07 — Envoy Gateway + FastAPI Distributed Trace](docs/07-envoy-gateway-tracing.md)
 - [08 — TLS with cert-manager and Gateway API](docs/08-tls-cert-manager.md)
+- [09 — HTTP to HTTPS Redirect](docs/09-http-to-https-redirect.md)
+- [10 — Infrastructure Engineering Harness Review](docs/10-infrastructure-engineering-harness-review.md)
 
 ## Next phases
 
-1. HTTP → HTTPS redirect enforcement
-2. NetworkPolicy / Pod Security / ResourceQuota / LimitRange
-3. Gateway policy: rate limiting / timeout / retry
-4. EKS migration
-5. Karpenter
-6. AWS Load Balancing
-7. Terraform based environment provisioning
+1. Runtime verify HTTP → HTTPS redirect and Restricted Pod Security changes
+2. Verify CNI NetworkPolicy enforcement
+3. Add and regression-test NetworkPolicy if enforcement is real
+4. Run node-drain / rolling-update reliability exercise
+5. Collect HPA/load evidence and derive quota/capacity policy
+6. Review GitHub Actions permissions and software supply-chain controls
+7. Gateway policy: rate limiting / timeout / retry
+8. EKS migration
+9. Karpenter / AWS Load Balancing
+10. Terraform based environment provisioning
 
-로컬 환경에서는 Kubernetes scheduling, GitOps, traffic management, observability, distributed tracing, TLS를 검증하고 이후 policy/security와 EKS 기반 cloud-native provisioning으로 확장합니다.
+로컬 환경에서는 Kubernetes scheduling, GitOps, traffic management, observability, distributed tracing, TLS와 workload hardening을 검증하고 이후 policy/security와 EKS 기반 cloud-native provisioning으로 확장합니다.
