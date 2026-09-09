@@ -5,6 +5,11 @@ metadata:
   namespace: demo-app
   labels:
     app: web
+    app.kubernetes.io/name: platform-api
+    app.kubernetes.io/part-of: platform-demo
+    app.kubernetes.io/component: gateway
+    observability: platform-demo
+    platform_service: platform-api
 spec:
   selector:
     app: web
@@ -12,4 +17,4 @@ spec:
   ports:
     - name: http
       port: 80
-      targetPort: 8000
+      targetPort: http
