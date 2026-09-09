@@ -2,8 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  - monitoring-namespace.yaml
   - envoyproxy.yaml
   - otel-referencegrant.yaml
   - gatewayclass.yaml
   - tls.yaml
   - gateway.yaml
+  - grafana-route.yaml
