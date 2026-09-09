@@ -20,6 +20,7 @@ FAULT_ERROR_RATE_PERCENT="${FAULT_ERROR_RATE_PERCENT:-25}"
 TRAFFIC_REQUESTS="${TRAFFIC_REQUESTS:-80}"
 RECOVERY_MAX_POLLS="${RECOVERY_MAX_POLLS:-28}"
 RECOVERY_POLL_SECONDS="${RECOVERY_POLL_SECONDS:-15}"
+PYTHON_BIN=""
 
 PF_PID=""
 FAULT_COMMIT=""
@@ -45,10 +46,22 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
+resolve_python() {
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' "$(command -v python3)"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    printf '%s\n' "$(command -v python)"
+    return 0
+  fi
+  fail "required Python interpreter not found: install python3 or provide python"
+}
+
 set_orders_fault() {
   local latency="$1"
   local error_rate="$2"
-  python - "${ORDERS_MANIFEST}" "${latency}" "${error_rate}" <<'PY'
+  "${PYTHON_BIN}" - "${ORDERS_MANIFEST}" "${latency}" "${error_rate}" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -73,7 +86,7 @@ PY
 }
 
 orders_fault_values() {
-  python - "${ORDERS_MANIFEST}" <<'PY'
+  "${PYTHON_BIN}" - "${ORDERS_MANIFEST}" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -147,7 +160,7 @@ collect_stage() {
     --prometheus "${prom}" \
     --output "${review}"
 
-  python - "${review}" <<'PY'
+  "${PYTHON_BIN}" - "${review}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -200,7 +213,7 @@ commit_and_push() {
 fault_detected() {
   local review="${RUN_DIR}/fault-review.json"
   [[ -f "${review}" ]] || return 1
-  python - "${review}" <<'PY'
+  "${PYTHON_BIN}" - "${review}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -216,7 +229,7 @@ PY
 recovery_verified() {
   local review="${RUN_DIR}/recovery-review.json"
   [[ -f "${review}" ]] || return 1
-  python - "${review}" <<'PY'
+  "${PYTHON_BIN}" - "${review}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -232,6 +245,7 @@ run_id=${RUN_ID}
 mode=${MODE}
 platform_repo=${ROOT_DIR}
 harness_repo=${HARNESS_DIR}
+python_bin=${PYTHON_BIN}
 fault_latency_ms=${FAULT_LATENCY_MS}
 fault_error_rate_percent=${FAULT_ERROR_RATE_PERCENT}
 fault_commit=${FAULT_COMMIT}
@@ -240,7 +254,8 @@ EOF
 }
 
 main() {
-  for cmd in git kubectl curl python; do require_cmd "${cmd}"; done
+  for cmd in git kubectl curl; do require_cmd "${cmd}"; done
+  PYTHON_BIN="$(resolve_python)"
   [[ -n "${HARNESS_DIR}" && -x "${HARNESS_DIR}/agent" ]] || fail "Infrastructure Engineering Agent not found; set HARNESS_DIR"
   [[ -f "${ORDERS_MANIFEST}" ]] || fail "orders manifest not found"
   [[ -f "${QUERY_FILE}" ]] || fail "Prometheus query profile not found"
@@ -248,6 +263,7 @@ main() {
   mkdir -p "${RUN_DIR}"
 
   log "preflight"
+  log "Python interpreter: ${PYTHON_BIN}"
   [[ "$(git -C "${ROOT_DIR}" rev-parse --abbrev-ref HEAD)" == "main" ]] || fail "platform repo must be on main"
   git -C "${ROOT_DIR}" diff --quiet || fail "platform repo has unstaged changes"
   git -C "${ROOT_DIR}" diff --cached --quiet || fail "platform repo has staged changes"
@@ -285,7 +301,7 @@ Requested fault:
 No mutation was performed.
 To execute intentionally:
   OPS_BENCHMARK_ACK=platform-engineering-lab \\
-    ops/benchmarks/orders-fault/run.sh --execute
+    bash ops/benchmarks/orders-fault/run.sh --execute
 EOF
     exit 0
   fi
@@ -342,7 +358,7 @@ EOF
 
   write_metadata
 
-  python - "${RUN_DIR}/revalidation.json" <<'PY'
+  "${PYTHON_BIN}" - "${RUN_DIR}/revalidation.json" <<'PY'
 import json
 import sys
 from pathlib import Path
