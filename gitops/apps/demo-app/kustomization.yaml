@@ -5,6 +5,8 @@ resources:
   - serviceaccount.yaml
   - deployment.yaml
   - service.yaml
+  - catalog.yaml
+  - orders.yaml
   - httproute.yaml
   - http-redirect.yaml
   - hpa.yaml
