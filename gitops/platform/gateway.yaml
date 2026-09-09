@@ -22,14 +22,14 @@ spec:
     - name: https
       protocol: HTTPS
       port: 443
-      hostname: "web.lab.local"
+      hostname: "*.lab.local"
 
       tls:
         mode: Terminate
         certificateRefs:
           - group: ""
             kind: Secret
-            name: web-lab-local-tls
+            name: lab-local-wildcard-tls
 
       allowedRoutes:
         namespaces:
