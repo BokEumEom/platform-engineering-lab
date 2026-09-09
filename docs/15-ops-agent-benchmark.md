@@ -59,14 +59,14 @@ Dry run:
 
 ```bash
 cd ~/platform-engineering-lab
-ops/benchmarks/orders-fault/run.sh
+bash ops/benchmarks/orders-fault/run.sh
 ```
 
 Intentional execution:
 
 ```bash
 OPS_BENCHMARK_ACK=platform-engineering-lab \
-  ops/benchmarks/orders-fault/run.sh --execute
+  bash ops/benchmarks/orders-fault/run.sh --execute
 ```
 
 The script requires a clean local `main` exactly matching `origin/main`.
