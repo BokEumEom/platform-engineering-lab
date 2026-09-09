@@ -20,6 +20,9 @@ spec:
               }[5m])
             )
 
+        # A healthy service may have no 5xx-labelled time series at all.
+        # Zero-fill from the request-rate label set so a true 0% error rate is
+        # represented as evidence instead of an empty Prometheus vector.
         - record: platform:http_errors:rate5m
           expr: |
             sum by (platform_service) (
@@ -30,16 +33,34 @@ spec:
                 status=~"5.."
               }[5m])
             )
-
-        - record: platform:http_error_ratio:5m
-          expr: |
-            sum by (platform_service) (
+            or
+            0 * sum by (platform_service) (
               rate(http_requests_total{
                 namespace="demo-app",
                 handler!="/metrics",
-                handler!~"/health/.*",
-                status=~"5.."
+                handler!~"/health/.*"
               }[5m])
+            )
+
+        - record: platform:http_error_ratio:5m
+          expr: |
+            (
+              sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*",
+                  status=~"5.."
+                }[5m])
+              )
+              or
+              0 * sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*"
+                }[5m])
+              )
             )
             /
             clamp_min(
@@ -55,13 +76,23 @@ spec:
 
         - record: platform:http_error_ratio:30m
           expr: |
-            sum by (platform_service) (
-              rate(http_requests_total{
-                namespace="demo-app",
-                handler!="/metrics",
-                handler!~"/health/.*",
-                status=~"5.."
-              }[30m])
+            (
+              sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*",
+                  status=~"5.."
+                }[30m])
+              )
+              or
+              0 * sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*"
+                }[30m])
+              )
             )
             /
             clamp_min(
@@ -77,13 +108,23 @@ spec:
 
         - record: platform:http_error_ratio:1h
           expr: |
-            sum by (platform_service) (
-              rate(http_requests_total{
-                namespace="demo-app",
-                handler!="/metrics",
-                handler!~"/health/.*",
-                status=~"5.."
-              }[1h])
+            (
+              sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*",
+                  status=~"5.."
+                }[1h])
+              )
+              or
+              0 * sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*"
+                }[1h])
+              )
             )
             /
             clamp_min(
@@ -99,13 +140,23 @@ spec:
 
         - record: platform:http_error_ratio:6h
           expr: |
-            sum by (platform_service) (
-              rate(http_requests_total{
-                namespace="demo-app",
-                handler!="/metrics",
-                handler!~"/health/.*",
-                status=~"5.."
-              }[6h])
+            (
+              sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*",
+                  status=~"5.."
+                }[6h])
+              )
+              or
+              0 * sum by (platform_service) (
+                rate(http_requests_total{
+                  namespace="demo-app",
+                  handler!="/metrics",
+                  handler!~"/health/.*"
+                }[6h])
+              )
             )
             /
             clamp_min(
