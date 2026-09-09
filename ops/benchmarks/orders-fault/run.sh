@@ -18,6 +18,8 @@ PROM_URL="http://127.0.0.1:${PROM_PORT}"
 FAULT_LATENCY_MS="${FAULT_LATENCY_MS:-800}"
 FAULT_ERROR_RATE_PERCENT="${FAULT_ERROR_RATE_PERCENT:-25}"
 TRAFFIC_REQUESTS="${TRAFFIC_REQUESTS:-80}"
+BASELINE_MAX_POLLS="${BASELINE_MAX_POLLS:-8}"
+BASELINE_POLL_SECONDS="${BASELINE_POLL_SECONDS:-15}"
 RECOVERY_MAX_POLLS="${RECOVERY_MAX_POLLS:-28}"
 RECOVERY_POLL_SECONDS="${RECOVERY_POLL_SECONDS:-15}"
 PYTHON_BIN=""
@@ -48,11 +50,11 @@ require_cmd() {
 
 resolve_python() {
   if command -v python3 >/dev/null 2>&1; then
-    printf '%s\n' "$(command -v python3)"
+    command -v python3
     return 0
   fi
   if command -v python >/dev/null 2>&1; then
-    printf '%s\n' "$(command -v python)"
+    command -v python
     return 0
   fi
   fail "required Python interpreter not found: install python3 or provide python"
@@ -71,11 +73,10 @@ latency = sys.argv[2]
 error_rate = sys.argv[3]
 text = path.read_text(encoding="utf-8")
 
-patterns = {
+for name, value in {
     "FAULT_LATENCY_MS": latency,
     "FAULT_ERROR_RATE_PERCENT": error_rate,
-}
-for name, value in patterns.items():
+}.items():
     pattern = rf'(?ms)(- name: {re.escape(name)}\s*\n\s*value:\s*")[^"]*(")'
     text, count = re.subn(pattern, rf'\g<1>{value}\g<2>', text, count=1)
     if count != 1:
@@ -189,14 +190,6 @@ review = json.loads(Path(sys.argv[1]).read_text())
 missing = review.get("evidence", {}).get("missing_required", [])
 blocking = [f for f in review.get("findings", []) if f.get("severity") in {"P0", "P1"}]
 healthy = review.get("state") == "healthy" and not missing and not blocking
-if not healthy:
-    print("BASELINE GATE FAILED")
-    print(f"  state={review.get('state')}")
-    print(f"  missing_required={missing}")
-    if blocking:
-        print("  blocking_findings:")
-        for finding in blocking:
-            print(f"    - {finding.get('severity')} {finding.get('id')}: {finding.get('observation')}")
 raise SystemExit(0 if healthy else 1)
 PY
 }
@@ -248,9 +241,7 @@ import sys
 from pathlib import Path
 r = json.loads(Path(sys.argv[1]).read_text())
 ids = {f.get("id") for f in r.get("findings", [])}
-required = {
-    "dependency.orders_fault_injection_correlated",
-}
+required = {"dependency.orders_fault_injection_correlated"}
 raise SystemExit(0 if required <= ids and r.get("state") in {"acute", "at_risk"} else 1)
 PY
 }
@@ -316,7 +307,7 @@ DRY RUN ONLY
 
 This benchmark will:
   1. capture baseline Kubernetes + Prometheus evidence;
-  2. require a healthy and complete baseline before any fault mutation;
+  2. wait for Prometheus scrape/recording-rule freshness and require a healthy baseline;
   3. commit/push orders fault injection to main;
   4. wait for Argo CD reconciliation and generate Gateway traffic;
   5. run the Infrastructure Engineering Agent Ops review;
@@ -341,13 +332,25 @@ EOF
 
   start_prometheus_proxy
 
-  generate_traffic 20
-  collect_stage baseline
-  if ! baseline_healthy; then
+  log "warming baseline telemetry"
+  local baseline_ready=0
+  for attempt in $(seq 1 "${BASELINE_MAX_POLLS}"); do
+    generate_traffic 20
+    collect_stage baseline
+    if baseline_healthy; then
+      baseline_ready=1
+      log "baseline gate passed: healthy and fresh evidence confirmed"
+      break
+    fi
+    if [[ "${attempt}" != "${BASELINE_MAX_POLLS}" ]]; then
+      log "baseline evidence not ready yet (${attempt}/${BASELINE_MAX_POLLS}); waiting for another scrape/evaluation cycle"
+      sleep "${BASELINE_POLL_SECONDS}"
+    fi
+  done
+  if [[ "${baseline_ready}" != "1" ]]; then
     write_metadata
-    fail "baseline evidence is not healthy and complete; no fault was injected. Inspect ${RUN_DIR}/baseline-review.json and baseline-prometheus.json"
+    fail "baseline evidence stayed incomplete/unhealthy; no fault was injected. Inspect ${RUN_DIR}/baseline-review.json and baseline-prometheus.json"
   fi
-  log "baseline gate passed: healthy evidence confirmed"
 
   log "injecting controlled orders fault through GitOps"
   set_orders_fault "${FAULT_LATENCY_MS}" "${FAULT_ERROR_RATE_PERCENT}"
