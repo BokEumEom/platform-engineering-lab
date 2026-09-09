@@ -34,7 +34,7 @@ spec:
 
       containers:
         - name: api
-          image: ghcr.io/bokeumeom/platform-api:739677a14a4134fa2b6c0f71d5de51e1857dd80a
+          image: ghcr.io/bokeumeom/platform-api:6ecc6015da056dff496f525ec4370b5ce8bd2597
           imagePullPolicy: IfNotPresent
 
           securityContext:
@@ -49,7 +49,7 @@ spec:
 
           env:
             - name: APP_VERSION
-              value: "739677a"
+              value: "6ecc601"
             - name: OTEL_SERVICE_NAME
               value: "platform-api"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
