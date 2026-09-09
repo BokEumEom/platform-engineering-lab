@@ -16,6 +16,14 @@ spec:
         app: web
 
     spec:
+      serviceAccountName: web
+      automountServiceAccountToken: false
+
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -28,6 +36,13 @@ spec:
         - name: api
           image: ghcr.io/bokeumeom/platform-api:739677a14a4134fa2b6c0f71d5de51e1857dd80a
           imagePullPolicy: IfNotPresent
+
+          securityContext:
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
 
           ports:
             - containerPort: 8000
