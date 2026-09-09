@@ -17,7 +17,7 @@
   "demo_error_ratio_1h": {
     "component": "demo-app",
     "signal": "error_ratio_1h",
-    "query": "sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\"}[1h])) > 0 and sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\",status=~\"5..\"}[1h])) / clamp_min(sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\"}[1h])), 0.001) or vector(0)"
+    "query": "sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\",status=~\"5..\"}[1h])) / clamp_min(sum(rate(http_requests_total{namespace=\"demo-app\",handler!=\"/metrics\"}[1h])), 0.001)"
   },
   "demo_p95_latency_5m": {
     "component": "demo-app",
