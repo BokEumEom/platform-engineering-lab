@@ -1,0 +1,171 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-operations-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  platform-operations.json: |-
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 1,
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Platform API Availability · 1h",
+          "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "decimals": 3}},
+          "targets": [{"refId": "A", "expr": "100 * platform:slo_availability_ratio:1h{platform_service=\"platform-api\"}"}]
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Error Budget Remaining · 6h Model",
+          "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "decimals": 2}},
+          "targets": [{"refId": "A", "expr": "platform:slo_error_budget_remaining:6h{platform_service=\"platform-api\"}"}]
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Ready Pods",
+          "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+          "fieldConfig": {"defaults": {"decimals": 0}},
+          "targets": [{"refId": "A", "expr": "sum(kube_pod_status_ready{namespace=\"demo-app\",condition=\"true\"} == 1)"}]
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "Firing Alerts",
+          "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+          "fieldConfig": {"defaults": {"decimals": 0}},
+          "targets": [{"refId": "A", "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)"}]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Request Rate by Service",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 5},
+          "fieldConfig": {"defaults": {"unit": "reqps", "min": 0}},
+          "targets": [{"refId": "A", "expr": "platform:http_requests:rate5m{platform_service=~\"$service\"}", "legendFormat": "{{platform_service}}"}]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "5xx Ratio by Service",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 5},
+          "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0}},
+          "targets": [{"refId": "A", "expr": "platform:http_error_ratio:5m{platform_service=~\"$service\"}", "legendFormat": "{{platform_service}}"}]
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "P95 Latency by Service",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 5},
+          "fieldConfig": {"defaults": {"unit": "s", "min": 0}},
+          "targets": [{"refId": "A", "expr": "platform:http_p95_latency_seconds:5m{platform_service=~\"$service\"}", "legendFormat": "{{platform_service}}"}]
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "Platform API Error Budget Burn Rate",
+          "description": "Lab policy: 99.9% availability. Fast alert pair: 5m/1h >14.4x; slow pair: 30m/6h >6x.",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+          "fieldConfig": {"defaults": {"unit": "short", "min": 0}},
+          "targets": [
+            {"refId": "A", "expr": "platform:slo_burn_rate:5m{platform_service=\"platform-api\"}", "legendFormat": "5m"},
+            {"refId": "B", "expr": "platform:slo_burn_rate:30m{platform_service=\"platform-api\"}", "legendFormat": "30m"},
+            {"refId": "C", "expr": "platform:slo_burn_rate:1h{platform_service=\"platform-api\"}", "legendFormat": "1h"},
+            {"refId": "D", "expr": "platform:slo_burn_rate:6h{platform_service=\"platform-api\"}", "legendFormat": "6h"}
+          ]
+        },
+        {
+          "id": 9,
+          "type": "timeseries",
+          "title": "HPA Current vs Desired Replicas",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+          "fieldConfig": {"defaults": {"min": 0, "decimals": 0}},
+          "targets": [
+            {"refId": "A", "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"demo-app\"}", "legendFormat": "{{horizontalpodautoscaler}} current"},
+            {"refId": "B", "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"demo-app\"}", "legendFormat": "{{horizontalpodautoscaler}} desired"}
+          ]
+        },
+        {
+          "id": 10,
+          "type": "timeseries",
+          "title": "Pod CPU vs Request",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 21},
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0}},
+          "targets": [{"refId": "A", "expr": "100 * sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"demo-app\",container=\"api\"}[5m])) / clamp_min(sum by (pod) (kube_pod_container_resource_requests{namespace=\"demo-app\",container=\"api\",resource=\"cpu\"}), 0.001)", "legendFormat": "{{pod}}"}]
+        },
+        {
+          "id": 11,
+          "type": "timeseries",
+          "title": "Pod Memory vs Limit",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 21},
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0}},
+          "targets": [{"refId": "A", "expr": "100 * sum by (pod) (container_memory_working_set_bytes{namespace=\"demo-app\",container=\"api\"}) / clamp_min(sum by (pod) (kube_pod_container_resource_limits{namespace=\"demo-app\",container=\"api\",resource=\"memory\"}), 1)", "legendFormat": "{{pod}}"}]
+        },
+        {
+          "id": 12,
+          "type": "timeseries",
+          "title": "Container Restarts · 1h",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 21},
+          "fieldConfig": {"defaults": {"min": 0, "decimals": 0}},
+          "targets": [{"refId": "A", "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=\"demo-app\"}[1h]))", "legendFormat": "{{pod}}"}]
+        },
+        {
+          "id": 13,
+          "type": "timeseries",
+          "title": "OTel Collector Trace Export",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 29},
+          "fieldConfig": {"defaults": {"unit": "ops", "min": 0}},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(otelcol_exporter_sent_spans[5m]))", "legendFormat": "sent spans/s"},
+            {"refId": "B", "expr": "sum(rate(otelcol_exporter_send_failed_spans[5m]))", "legendFormat": "failed spans/s"},
+            {"refId": "C", "expr": "sum(rate(otelcol_receiver_refused_spans[5m]))", "legendFormat": "refused spans/s"}
+          ]
+        },
+        {
+          "id": 14,
+          "type": "timeseries",
+          "title": "Envoy Gateway Live",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 29},
+          "fieldConfig": {"defaults": {"min": 0, "max": 1, "decimals": 0}},
+          "targets": [{"refId": "A", "expr": "envoy_server_live", "legendFormat": "{{pod}}"}]
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["platform-engineering", "operations", "slo"],
+      "templating": {
+        "list": [
+          {
+            "name": "service",
+            "label": "Service",
+            "type": "query",
+            "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+            "query": {"query": "label_values(platform:http_requests:rate5m, platform_service)", "refId": "service-variable"},
+            "includeAll": true,
+            "allValue": ".*",
+            "multi": true,
+            "refresh": 1
+          },
+          {
+            "name": "DS_PROMETHEUS",
+            "label": "Prometheus",
+            "type": "datasource",
+            "query": "prometheus",
+            "refresh": 1
+          }
+        ]
+      },
+      "time": {"from": "now-6h", "to": "now"},
+      "timezone": "browser",
+      "title": "Platform Operations · Service Health",
+      "uid": "platform-operations-service-health",
+      "version": 1
+    }
