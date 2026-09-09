@@ -51,16 +51,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # The workflow writes a deployment commit back to main. Other documentation
-      # or manifest commits may land while the image is building, so update the
-      # local branch before editing the GitOps manifest.
       - name: Sync latest main
         shell: bash
         run: |
           git fetch origin main
           git rebase origin/main
 
-      - name: Update GitOps manifest
+      - name: Update all GitOps workloads
         shell: bash
         run: |
           python - <<'PY'
@@ -68,32 +65,35 @@ jobs:
           import re
           from pathlib import Path
 
-          path = Path("gitops/apps/demo-app/deployment.yaml")
-          text = path.read_text()
+          files = [
+              Path("gitops/apps/demo-app/deployment.yaml"),
+              Path("gitops/apps/demo-app/catalog.yaml"),
+              Path("gitops/apps/demo-app/orders.yaml"),
+          ]
 
           sha = os.environ["GITHUB_SHA"]
           image = f"{os.environ['IMAGE_NAME']}:{sha}"
           short_sha = sha[:7]
 
-          text, image_count = re.subn(
-              r"(?m)^(\s*image:\s*).+$",
-              rf"\g<1>{image}",
-              text,
-              count=1,
-          )
-          text, version_count = re.subn(
-              r'(?ms)(- name: APP_VERSION\s*\n\s*value:\s*")[^"]*(")',
-              rf"\g<1>{short_sha}\g<2>",
-              text,
-              count=1,
-          )
+          for path in files:
+              text = path.read_text()
+              text, image_count = re.subn(
+                  r"(?m)^(\s*image:\s*)ghcr\.io/bokeumeom/platform-api:[^\s]+$",
+                  rf"\g<1>{image}",
+                  text,
+              )
+              text, version_count = re.subn(
+                  r'(?ms)(- name: APP_VERSION\s*\n\s*value:\s*")[^"]*(")',
+                  rf"\g<1>{short_sha}\g<2>",
+                  text,
+              )
 
-          if image_count != 1:
-              raise SystemExit("expected exactly one container image field")
-          if version_count != 1:
-              raise SystemExit("expected exactly one APP_VERSION field")
+              if image_count != 1:
+                  raise SystemExit(f"{path}: expected exactly one platform-api image, got {image_count}")
+              if version_count != 1:
+                  raise SystemExit(f"{path}: expected exactly one APP_VERSION, got {version_count}")
 
-          path.write_text(text)
+              path.write_text(text)
           PY
 
       - name: Commit GitOps update
@@ -102,14 +102,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add gitops/apps/demo-app/deployment.yaml
+          git add \
+            gitops/apps/demo-app/deployment.yaml \
+            gitops/apps/demo-app/catalog.yaml \
+            gitops/apps/demo-app/orders.yaml
 
           git diff --cached --quiet && exit 0
 
-          git commit -m "chore: deploy platform-api ${GITHUB_SHA::7}"
+          git commit -m "chore: deploy platform services ${GITHUB_SHA::7}"
 
-          # Retry a few times if main advances again in the short window between
-          # rebase and push.
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then
               exit 0
@@ -121,5 +122,5 @@ jobs:
             sleep 2
           done
 
-          echo "failed to push GitOps manifest after retries"
+          echo "failed to push GitOps manifests after retries"
           exit 1
