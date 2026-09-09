@@ -71,6 +71,18 @@ grafana:
       editable: true
       jsonData:
         httpMethod: GET
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki-gateway.monitoring.svc.cluster.local
+      editable: true
+      jsonData:
+        derivedFields:
+          - name: TraceID
+            matcherRegex: '"trace_id":"([a-f0-9]{32})"'
+            datasourceUid: tempo
+            url: '$${__value.raw}'
   resources:
     requests:
       cpu: 50m
