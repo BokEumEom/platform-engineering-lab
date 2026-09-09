@@ -55,7 +55,9 @@ grafana:
   grafana.ini:
     server:
       domain: grafana.lab.local
-      root_url: https://grafana.lab.local
+      # WSL reaches the real MetalLB :443 path through the Docker TCP proxy on
+      # localhost:8443; keep Grafana redirects on that externally reachable URL.
+      root_url: https://grafana.lab.local:8443
   sidecar:
     dashboards:
       enabled: true
