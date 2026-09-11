@@ -9,3 +9,5 @@ resources:
   - tls.yaml
   - gateway.yaml
   - grafana-route.yaml
+  - prometheus-route.yaml
+  - argocd-route.yaml
