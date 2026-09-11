@@ -57,6 +57,12 @@ spec:
               value: "578285b"
             - name: SERVICE_ROLE
               value: "orders"
+            - name: INVENTORY_URL
+              value: "http://inventory.demo-app.svc.cluster.local"
+            - name: PAYMENTS_URL
+              value: "http://payments.demo-app.svc.cluster.local"
+            - name: DOWNSTREAM_TIMEOUT_SECONDS
+              value: "2.0"
             - name: FAULT_LATENCY_MS
               value: "0"
             - name: FAULT_ERROR_RATE_PERCENT
