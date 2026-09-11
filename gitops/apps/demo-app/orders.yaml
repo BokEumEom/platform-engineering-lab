@@ -42,7 +42,7 @@ spec:
               app: orders
       containers:
         - name: api
-          image: ghcr.io/bokeumeom/platform-api:578285b90485a9b7fa815c0a527c2226eb9ab9e1
+          image: ghcr.io/bokeumeom/platform-api:0655417e0143c853d75672b9d03e8421ca06e6db
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsUser: 10001
@@ -54,7 +54,7 @@ spec:
               containerPort: 8000
           env:
             - name: APP_VERSION
-              value: "578285b"
+              value: "0655417"
             - name: SERVICE_ROLE
               value: "orders"
             - name: INVENTORY_URL
