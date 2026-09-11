@@ -1,307 +1,168 @@
-# Platform Engineering Lab
+# Platform Engineering Reference Environment
 
-로컬 Kubernetes 환경에서 **Gateway API, GitOps, Autoscaling, Scheduling, CI/CD, Observability, Distributed Tracing, TLS**를 실제로 연결해보는 Platform Engineering 학습 프로젝트입니다.
+`platform-engineering-lab` is the executable Kubernetes target environment for the **Infrastructure Engineering Harness**.
 
-단순히 Kubernetes 리소스를 배포하는 데서 끝내지 않고, 애플리케이션 소스 변경이 GitHub Actions와 GHCR, Argo CD를 거쳐 Kubernetes까지 자동 반영되고, Prometheus/Grafana/Alertmanager로 운영 상태를 관측하고, OpenTelemetry/Tempo로 Gateway부터 FastAPI까지 trace를 연결하며, cert-manager와 Envoy Gateway로 HTTPS까지 검증하는 흐름을 구성합니다.
+The project started as a local Platform Engineering lab and has evolved into a reproducible environment for testing whether an Infrastructure Engineering Agent can operate against real Kubernetes/GitOps/observability evidence without inventing state or treating deployment success as incident recovery.
 
-최근 단계에서는 `infrastructure-engineering-harness`의 Architecture / SRE / Security review 원칙을 적용해 기능 추가보다 운영 안전성, 증거 기반 튜닝, 권한 최소화와 회귀 검증을 우선합니다.
+The operating goal is:
 
-## 처음 시작한다면
+```text
+Observe
+→ Diagnose
+→ Propose Change
+→ Evaluate Risk / Policy
+→ Approval
+→ Execute through GitOps or Terraform ownership
+→ Post-check
+→ Rollback when verification fails
+→ Preserve evidence
+→ Re-evaluate / learn
+```
 
-Kubernetes나 Platform Engineering이 익숙하지 않다면 아래 문서부터 순서대로 보는 것을 권장합니다.
+The current repository implements the runtime/evidence side of this loop and the first controlled GitOps remediation benchmark. Terraform ownership and policy-gated approved execution are the next reference-environment layer.
 
-1. **[Beginner Walkthrough — 처음부터 설치하고 따라 하기](docs/00-beginner-walkthrough.md)**
-   - Docker Desktop + WSL2
-   - `kubectl` / Helm 준비
-   - Envoy Gateway `helm install`
-   - Metrics Server / MetalLB / Argo CD 설치
-   - GitOps bootstrap
-   - GitHub Actions + GHCR
-
-2. **[Kubernetes Platform Lab — Step by Step](docs/01-kubernetes-platform-lab.md)**
-   - HPA / PDB / scheduling
-   - cordon / drain
-   - topology spread / affinity / taints
-   - GitOps ownership
-   - 실제 장애 원인과 해결 과정
-
-3. **[Observability — Prometheus + Grafana](docs/02-observability.md)**
-   - FastAPI `/metrics`
-   - kube-prometheus-stack 경량 설치
-   - ServiceMonitor
-   - Prometheus target / PromQL
-   - Grafana
-   - Grafana OOMKilled troubleshooting
-
-4. **[Grafana Dashboard as Code](docs/03-grafana-dashboard-as-code.md)**
-   - RPS / 5xx / P95
-   - Pod CPU / Memory / Ready Pods
-   - ConfigMap + Grafana sidecar 기반 자동 로드
-
-5. **[Envoy Gateway Metrics](docs/04-envoy-gateway-metrics.md)**
-   - Envoy proxy `/stats/prometheus`
-   - PodMonitor
-   - Gateway RPS / latency / health
-   - Gateway vs FastAPI 비교
-
-6. **[Alerting — PrometheusRule + Alertmanager](docs/05-alerting.md)**
-   - Target Down
-   - 5xx rate
-   - P95 latency
-   - Envoy proxy down
-   - Pending / Firing / Resolved lifecycle
-
-7. **[OpenTelemetry Tracing](docs/06-opentelemetry-tracing.md)**
-   - FastAPI OpenTelemetry instrumentation
-   - OpenTelemetry Collector
-   - Tempo
-   - Trace ID direct lookup
-
-8. **[Envoy Gateway Distributed Tracing](docs/07-envoy-gateway-tracing.md)**
-   - Envoy Gateway tracing
-   - Cross-namespace OTLP backend ReferenceGrant
-   - Docker Desktop / WSL proxy
-   - Envoy ingress span → `platform-api` → `GET /`
-   - same Trace ID / parent-child 관계 runtime 검증
-
-9. **[TLS with cert-manager and Gateway API](docs/08-tls-cert-manager.md)**
-   - cert-manager v1.21.1
-   - self-signed local Certificate
-   - Gateway HTTPS listener
-   - Docker HTTPS proxy
-   - Envoy TLS termination → FastAPI runtime 검증
-
-10. **[HTTP to HTTPS Redirect](docs/09-http-to-https-redirect.md)**
-    - HTTP listener redirect 전용 분리
-    - HTTPS listener application route 전용 분리
-    - Gateway API `RequestRedirect`
-
-11. **[Infrastructure Engineering Harness Review](docs/10-infrastructure-engineering-harness-review.md)**
-    - Architecture / SRE / Security review
-    - evidence boundary
-    - workload privilege hardening
-    - Pod Security Admission
-    - NetworkPolicy / capacity / supply-chain 후속 과제
-
-## 현재 구현 상태
-
-- Kubernetes v1.36.1 / Docker Desktop kind 3-node cluster
-- Envoy Gateway + Gateway API
-- MetalLB local `LoadBalancer`
-- FastAPI sample application
-- Deployment / Service / HTTPRoute
-- HPA / PDB
-- `topologySpreadConstraints` 기반 Pod 분산
-- Argo CD automated sync / self-heal / prune
-- GitHub Actions CI
-- GHCR image registry
-- Git commit SHA 기반 immutable deployment
-- FastAPI Prometheus `/metrics`
-- ServiceMonitor / PodMonitor
-- Prometheus + Grafana
-- Grafana Dashboard as Code
-- Envoy Gateway metrics
-- PrometheusRule
-- Alertmanager
-- OpenTelemetry Collector
-- Tempo
-- FastAPI tracing
-- Envoy Gateway → FastAPI distributed tracing **runtime verified**
-- cert-manager v1.21.1
-- Gateway API HTTPS listener
-- self-signed TLS for `web.lab.local`
-- Envoy TLS termination → FastAPI **runtime verified**
-- Docker Desktop / WSL → kind MetalLB 접근을 위한 local socat proxy
-- HTTP → HTTPS redirect desired state **runtime verification pending**
-- dedicated demo-app ServiceAccount / API token automount disabled **runtime verification pending**
-- Restricted Pod Security workload hardening **runtime verification pending**
-
-## Verified request paths
-
-Distributed tracing:
+## Current reference topology
 
 ```text
 Client
-  ↓
-Docker HTTP/HTTPS proxy
   ↓
 MetalLB
   ↓
-Envoy Gateway ingress span
-  ↓ same Trace ID
-platform-api / GET /
-  ↓
-OpenTelemetry Collector
-  ↓
-Tempo
-  ↓
-Grafana
-```
-
-HTTPS:
-
-```text
-Client
-  ↓ HTTPS
-Docker HTTPS proxy :8443
-  ↓
-MetalLB :443
-  ↓
 Envoy Gateway
-  ↓ TLS termination
-HTTPRoute
   ↓
-demo-app / FastAPI
+platform-api
+  ├─→ catalog-service
+  ├─→ recommendations-service
+  └─→ orders-service
+        ├─→ inventory-service
+        └─→ payments-service
 ```
 
-## Architecture
+Six services run as independent Kubernetes workloads. Each service has its own Deployment, Service, ServiceAccount, HPA, PDB, Prometheus identity, OpenTelemetry service name, structured logs and controlled fault profile.
+
+The same immutable FastAPI image is reused with different `SERVICE_ROLE` values so the environment remains practical on local kind while still providing fan-out and multi-hop failure behavior.
+
+## Operational stack
 
 ```text
-Developer
-   |
-   | git push
-   v
-GitHub Repository
-   |
-   v
-GitHub Actions
-   |
-   +-- Docker Build
-   +-- Push image to GHCR
-   +-- Update GitOps manifest with commit SHA
-   |
-   v
-Argo CD
-   |
-   v
-Kubernetes
-   |
-   +-------------------------------+
-   |                               |
-FastAPI Pod                     FastAPI Pod
-   |                               |
-   +---------------+---------------+
-                   |
-                Service
-                   |
-               HTTPRoute
-                   |
-           Envoy Gateway
-             /          \
-        HTTP :80      HTTPS :443
-          |               |
-       Redirect      cert-manager Secret
-                          |
-                       MetalLB
-
-FastAPI /metrics  -------- ServiceMonitor ---+
-                                            |
-Envoy /stats/prometheus ---- PodMonitor -----+
-                                            v
-                                        Prometheus
-                                         /      \
-                                        v        v
-                                    Grafana   Alert rules
-                                                |
-                                                v
-                                           Alertmanager
-
-Envoy span + FastAPI span
-          |
-          v
-OpenTelemetry Collector
-          |
-          v
-        Tempo
-          |
-          v
-       Grafana
+Kubernetes v1.36.x / kind / Docker Desktop
+Envoy Gateway + Gateway API
+MetalLB
+cert-manager / TLS
+Argo CD / GitOps
+GitHub Actions + GHCR
+Prometheus / Grafana / Alertmanager
+OpenTelemetry Collector / Tempo
+Grafana Alloy / Loki
+Infrastructure Engineering Agent evidence adapters
 ```
 
-## Platform / Application ownership model
+## Agent operating model
+
+The Harness collects live evidence rather than inferring runtime state from repository configuration.
 
 ```text
-Platform Team
-platform-system/
-  GatewayClass: platform-eg
-  Gateway:      platform-gateway
-  Issuer
-  Certificate
-
-Application Team
-demo-app/
-  ServiceAccount
-  Deployment
-  Service
-  HTTPRoute
-  HPA
-  PDB
+Kubernetes evidence
+        +
+Prometheus evidence
+        ↓
+ops-review
+        ↓
+state:
+  healthy | at_risk | acute | insufficient_evidence
+        ↓
+findings + evidence refs + release guidance
+        ↓
+remediation
+        ↓
+fresh evidence
+        ↓
+ops-compare
+        ↓
+verified recovery | persistent issue | regression
 ```
 
-`platform-gateway`는 `gateway-access=true` 라벨이 있는 Namespace의 Route만 허용합니다.
+Dependency analysis is topology-generic. The Agent discovers application services from Kubernetes Deployment evidence (`OTEL_SERVICE_NAME`) and matches Prometheus observations by `component` and `signal`; new services require telemetry/query coverage rather than hardcoded review branches.
 
-`demo-app` namespace는 Argo CD `managedNamespaceMetadata`로 Gateway access와 Pod Security labels를 관리합니다.
+## First live Ops benchmark
 
-## Repository structure
+The first controlled benchmark injects latency/5xx into `orders-service` through GitOps and requires the Agent to localize the dependency failure and verify recovery from fresh evidence.
+
+Dry run:
+
+```bash
+bash ops/benchmarks/orders-fault/run.sh
+```
+
+Intentional execution:
+
+```bash
+OPS_BENCHMARK_ACK=platform-engineering-lab \
+  bash ops/benchmarks/orders-fault/run.sh --execute
+```
+
+The benchmark performs:
 
 ```text
-platform-engineering-lab/
-├── .github/
-│   └── workflows/
-│       └── api-ci.yaml
-├── apps/
-│   └── api/
-├── argocd/
-├── gitops/
-│   ├── platform/
-│   └── apps/demo-app/
-├── observability/
-│   ├── kube-prometheus-stack-values.yaml
-│   ├── demo-app-servicemonitor.yaml
-│   ├── demo-app-dashboard.yaml
-│   ├── envoy-proxy-podmonitor.yaml
-│   ├── envoy-gateway-dashboard.yaml
-│   ├── otel-collector-values.yaml
-│   └── platform-alerts.yaml
-├── platform/
-│   └── cert-manager-values.yaml
-├── docs/
-│   ├── 00-beginner-walkthrough.md
-│   ├── 01-kubernetes-platform-lab.md
-│   ├── 02-observability.md
-│   ├── 03-grafana-dashboard-as-code.md
-│   ├── 04-envoy-gateway-metrics.md
-│   ├── 05-alerting.md
-│   ├── 06-opentelemetry-tracing.md
-│   ├── 07-envoy-gateway-tracing.md
-│   ├── 08-tls-cert-manager.md
-│   ├── 09-http-to-https-redirect.md
-│   └── 10-infrastructure-engineering-harness-review.md
-└── metallb-config.yaml
+healthy baseline
+→ GitOps fault commit
+→ Argo reconciliation
+→ real HTTPS Gateway traffic
+→ Kubernetes + Prometheus evidence
+→ Ops review
+→ GitOps remediation
+→ fresh evidence
+→ ops-compare
+→ verified recovery or failure
 ```
 
-## Installation / Management model
+Runtime evidence is written under `.ops-benchmark/<run-id>/` and is not committed to Git.
 
-| Component | Installation / Management |
-|---|---|
-| Envoy Gateway | Helm |
-| Metrics Server | `kubectl apply -f` |
-| MetalLB | `kubectl apply -f` |
-| Argo CD | `kubectl apply --server-side -f` |
-| Application / Gateway resources | Argo CD + Kustomize |
-| Prometheus / Grafana / Alertmanager | Helm (`kube-prometheus-stack`) |
-| OpenTelemetry Collector | Helm |
-| Tempo | Helm |
-| cert-manager | Helm |
-| Issuer / Certificate / Gateway TLS config | Argo CD + Kustomize |
-| FastAPI metrics discovery | ServiceMonitor |
-| Envoy proxy metrics discovery | PodMonitor |
-| Dashboards | ConfigMap / Dashboard as Code |
-| Alert rules | PrometheusRule |
+## Grafana access through the real platform path
 
-## Key operational lessons
+Grafana is exposed through the shared Gateway instead of its own Kubernetes `LoadBalancer` Service:
 
-### GitOps ownership
+```text
+https://grafana.lab.local:8443
+  → local Docker TCP proxy
+  → MetalLB :443
+  → Envoy Gateway
+  → HTTPRoute/grafana
+  → monitoring-grafana
+```
+
+For Windows browser access add:
+
+```text
+127.0.0.1 grafana.lab.local
+127.0.0.1 web.lab.local
+```
+
+## Operational dashboards
+
+### Platform Operations · Service Health
+
+Automatically discovers all services from `platform_service` and provides:
+
+- request rate;
+- 5xx ratio;
+- P95 latency;
+- platform-api SLO / error budget;
+- HPA current/desired replicas;
+- CPU/memory pressure;
+- restarts;
+- OpenTelemetry pipeline state;
+- Envoy live state.
+
+### Kubernetes Operations · Capacity & Reliability
+
+Covers node readiness, Pending Pods, unavailable replicas, OOMKilled, HPA saturation, PDB disruption allowance and namespace resource pressure.
+
+### Platform Operations · Logs & Events
+
+Covers application JSON logs, Kubernetes Events and Loki `trace_id` → Tempo correlation.
+
+## GitOps ownership
 
 ```text
 Git = desired state
@@ -309,85 +170,112 @@ Kubernetes = actual state
 Argo CD = reconciliation
 ```
 
-HPA가 `Deployment.spec.replicas`를 소유하므로 Argo CD에서는 해당 필드를 ignore합니다.
+The Agent must not bypass an owned resource with an ad-hoc patch simply because it can execute `kubectl`.
 
-### Evidence before tuning
-
-`infrastructure-engineering-harness` 리뷰 원칙에 따라 HPA threshold, requests/limits, ResourceQuota 같은 수치는 현재 workload evidence 없이 임의 조정하지 않습니다.
+Current ownership direction:
 
 ```text
-Repository desired state != runtime evidence
-Agent recommendation   != verified outcome
+Terraform
+  → bootstrap / foundation / quota / future cloud resources
+
+Argo CD
+  → application workloads
+  → Gateway resources
+  → operational observability policy
+
+Agent
+  → evidence
+  → diagnosis
+  → proposal
+  → policy/approval aware execution
+  → independent verification
 ```
 
-### Immutable deployment
+Terraform and Argo CD must not concurrently own the same Kubernetes object.
+
+## Repository structure
 
 ```text
-source commit
-   == container image tag
-   == GitOps deployment version
+platform-engineering-lab/
+├── apps/api/                       # six-role FastAPI application
+├── gitops/apps/demo-app/           # application desired state
+├── gitops/platform/                # shared platform resources
+├── argocd/                         # Argo Applications
+├── observability/                  # metrics/logs/traces/SLO/dashboards
+├── ops/benchmarks/                 # live Ops Agent benchmarks
+├── platform/                       # platform component values
+├── docs/                           # executable architecture/runbooks
+└── .github/workflows/              # CI + manifest validation
 ```
 
-### CI writing back to Git
+## Important documentation
 
-CI가 같은 저장소의 GitOps manifest를 갱신하기 때문에 concurrent commit으로 non-fast-forward push가 발생할 수 있습니다. 현재 workflow는 최신 `main`을 동기화하고 push를 재시도하도록 보강했습니다.
+Start with the operational documents when evaluating the Agent:
 
-### Resource limits are operational behavior
-
-Grafana를 256Mi memory limit으로 시작했을 때 dashboard가 추가된 뒤 실제 `OOMKilled`가 발생했습니다.
-
-```text
-port-forward disconnect
- -> restartCount 확인
- -> lastState.reason=OOMKilled
- -> Helm values memory 조정
- -> rollout 재검증
-```
-
-### Docker Desktop / WSL networking
-
-MetalLB External IP는 kind/Docker network 안에서 정상이어도 WSL host에서 직접 접근하면 timeout될 수 있습니다.
-
-이 Lab에서는 Docker published port를 가진 `socat` proxy로 실제 MetalLB IP를 경유합니다.
-
-```text
-localhost:8080 -> Docker proxy -> MetalLB :80
-localhost:8443 -> Docker proxy -> MetalLB :443
-```
-
-### Observability layers
-
-```text
-Metrics  -> Prometheus -> Grafana
-Alerts   -> PrometheusRule -> Alertmanager
-Traces   -> Envoy/FastAPI -> OTel Collector -> Tempo -> Grafana
-```
-
-## Learning notes
-
-- [00 — Beginner Walkthrough](docs/00-beginner-walkthrough.md)
-- [01 — Kubernetes Platform Lab Step by Step](docs/01-kubernetes-platform-lab.md)
-- [02 — Observability: Prometheus + Grafana](docs/02-observability.md)
-- [03 — Grafana Dashboard as Code](docs/03-grafana-dashboard-as-code.md)
-- [04 — Envoy Gateway Metrics](docs/04-envoy-gateway-metrics.md)
-- [05 — Alerting: PrometheusRule + Alertmanager](docs/05-alerting.md)
-- [06 — OpenTelemetry Tracing](docs/06-opentelemetry-tracing.md)
-- [07 — Envoy Gateway + FastAPI Distributed Trace](docs/07-envoy-gateway-tracing.md)
-- [08 — TLS with cert-manager and Gateway API](docs/08-tls-cert-manager.md)
-- [09 — HTTP to HTTPS Redirect](docs/09-http-to-https-redirect.md)
 - [10 — Infrastructure Engineering Harness Review](docs/10-infrastructure-engineering-harness-review.md)
+- [11 — NetworkPolicy Hardening](docs/11-networkpolicy-hardening.md)
+- [12 — Operational Observability Agent Review](docs/12-operational-observability-agent-review.md)
+- [13 — Ops Agent Runbook](docs/13-ops-agent-runbook.md)
+- [14 — Operational Observability and Agent Rollout](docs/14-operational-observability.md)
+- [15 — Ops Agent Benchmark](docs/15-ops-agent-benchmark.md)
+- [16 — Reference Environment Roadmap](docs/16-reference-environment-roadmap.md)
 
-## Next phases
+Earlier documents (`00`–`09`) preserve the build-up of Kubernetes, Gateway API, observability, tracing and TLS foundations.
 
-1. Runtime verify HTTP → HTTPS redirect and Restricted Pod Security changes
-2. Verify CNI NetworkPolicy enforcement
-3. Add and regression-test NetworkPolicy if enforcement is real
-4. Run node-drain / rolling-update reliability exercise
-5. Collect HPA/load evidence and derive quota/capacity policy
-6. Review GitHub Actions permissions and software supply-chain controls
-7. Gateway policy: rate limiting / timeout / retry
-8. EKS migration
-9. Karpenter / AWS Load Balancing
-10. Terraform based environment provisioning
+## Current evidence boundaries
 
-로컬 환경에서는 Kubernetes scheduling, GitOps, traffic management, observability, distributed tracing, TLS와 workload hardening을 검증하고 이후 policy/security와 EKS 기반 cloud-native provisioning으로 확장합니다.
+Already established in repository/runtime history:
+
+- GitOps desired state with automated sync/self-heal/prune;
+- immutable GHCR image deployment by commit SHA;
+- Gateway API + MetalLB application path;
+- Prometheus ServiceMonitor / Envoy PodMonitor;
+- Grafana dashboards as code;
+- SLO/error-budget recording rules;
+- OpenTelemetry + Tempo distributed tracing;
+- Loki + Alloy log/event pipeline desired state;
+- read-only Kubernetes and Prometheus Agent adapters;
+- evidence-backed `ops-review` and `ops-compare`;
+- controlled fault injection and recovery benchmark;
+- regression fixtures for Agent decision behavior.
+
+A repository manifest is **not** treated as proof that the corresponding runtime behavior is healthy. Runtime claims remain pending until fresh evidence verifies them.
+
+## Evaluation direction
+
+The first benchmark is only the start. The reference environment is intended to grow toward 10–20 reproducible failure scenarios including:
+
+```text
+dependency 5xx / latency
+bad rollout / probe failure
+OOMKilled
+HPA / ResourceQuota saturation
+PDB blocked operation
+NetworkPolicy / DNS failure
+Gateway / TLS failure
+Prometheus / OTel / Loki telemetry failure
+Argo drift
+Terraform destructive proposal
+RBAC privilege escalation
+public exposure change
+failed remediation + rollback
+```
+
+Evaluation should measure detection, root-cause localization, evidence completeness, risk classification, unsafe-action avoidance, post-check quality, rollback correctness and false-positive/false-negative behavior.
+
+## Production-readiness boundary
+
+This project is a **production-style reference environment**, not a claim that a local kind cluster is production infrastructure.
+
+Still to be closed before calling the Agent a production autonomous operator:
+
+- policy engine for mutation risk/blast radius/privilege/cost;
+- explicit human approval workflow;
+- Terraform change adapter and ownership model;
+- independently verified rollback executor;
+- durable/HA production telemetry patterns;
+- real notification/on-call integration;
+- broader live failure/evaluation corpus;
+- measurable external-user reproduction evidence.
+
+The project is considered valuable when another engineer can clone it, reproduce an incident, understand why the Agent made a decision, execute an approved change through the correct control plane, and independently verify or roll back the result.
