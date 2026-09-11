@@ -9,6 +9,7 @@ on:
       - "platform/**"
       - "argocd/**"
       - "ops/**"
+      - "scripts/**"
       - "docs/13-ops-agent-runbook.md"
       - "docs/14-operational-observability.md"
       - ".github/workflows/platform-validate.yaml"
@@ -19,6 +20,7 @@ on:
       - "platform/**"
       - "argocd/**"
       - "ops/**"
+      - "scripts/**"
       - ".github/workflows/platform-validate.yaml"
   workflow_dispatch:
 
@@ -73,6 +75,9 @@ jobs:
           print(f"validated YAML files: {count}")
           print(f"validated Grafana dashboard JSON documents: {dashboards}")
           PY
+
+      - name: Guard Gateway route namespace access
+        run: python scripts/validate_gateway_route_namespaces.py
 
       - name: Guard zero-error SLI materialization
         shell: bash
