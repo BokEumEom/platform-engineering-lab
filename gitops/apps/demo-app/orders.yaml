@@ -42,7 +42,7 @@ spec:
               app: orders
       containers:
         - name: api
-          image: ghcr.io/bokeumeom/platform-api:998d6ce4e34859bcca3c165c42624aa057e71aa6
+          image: ghcr.io/bokeumeom/platform-api:578285b90485a9b7fa815c0a527c2226eb9ab9e1
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsUser: 10001
@@ -54,7 +54,7 @@ spec:
               containerPort: 8000
           env:
             - name: APP_VERSION
-              value: "998d6ce"
+              value: "578285b"
             - name: SERVICE_ROLE
               value: "orders"
             - name: FAULT_LATENCY_MS

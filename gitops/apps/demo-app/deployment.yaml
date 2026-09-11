@@ -41,7 +41,7 @@ spec:
 
       containers:
         - name: api
-          image: ghcr.io/bokeumeom/platform-api:998d6ce4e34859bcca3c165c42624aa057e71aa6
+          image: ghcr.io/bokeumeom/platform-api:578285b90485a9b7fa815c0a527c2226eb9ab9e1
           imagePullPolicy: IfNotPresent
 
           securityContext:
@@ -57,7 +57,7 @@ spec:
 
           env:
             - name: APP_VERSION
-              value: "998d6ce"
+              value: "578285b"
             - name: SERVICE_ROLE
               value: "gateway"
             - name: CATALOG_URL
