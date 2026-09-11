@@ -13,7 +13,8 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="${OUTPUT_ROOT}/${RUN_ID}"
 ORDERS_MANIFEST="${ROOT_DIR}/gitops/apps/demo-app/orders.yaml"
 QUERY_FILE="${ROOT_DIR}/observability/agent-prometheus-queries.json"
-PROM_URL="${PROM_URL:-http://prometheus.lab.local:8080}"
+PROM_GATEWAY_URL="${PROM_GATEWAY_URL:-http://127.0.0.1:8080}"
+PROM_HOST="${PROM_HOST:-prometheus.lab.local}"
 FAULT_LATENCY_MS="${FAULT_LATENCY_MS:-800}"
 FAULT_ERROR_RATE_PERCENT="${FAULT_ERROR_RATE_PERCENT:-25}"
 TRAFFIC_REQUESTS="${TRAFFIC_REQUESTS:-80}"
@@ -24,6 +25,7 @@ RECOVERY_POLL_SECONDS="${RECOVERY_POLL_SECONDS:-15}"
 PYTHON_BIN=""
 FAULT_COMMIT=""
 RECOVERY_COMMIT=""
+FAULT_ACTIVE=0
 
 log() { printf '\n[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -61,6 +63,43 @@ for name in ("FAULT_LATENCY_MS", "FAULT_ERROR_RATE_PERCENT"):
     print(f"{name}={match.group(1) if match else 'MISSING'}")
 PY
 }
+
+initial_fault_is_clear() {
+  "${PYTHON_BIN}" - "${ORDERS_MANIFEST}" <<'PY'
+from pathlib import Path
+import re, sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+values = {}
+for name in ("FAULT_LATENCY_MS", "FAULT_ERROR_RATE_PERCENT"):
+    match = re.search(rf'(?ms)- name: {name}\s*\n\s*value:\s*"([^"]*)"', text)
+    values[name] = match.group(1) if match else None
+raise SystemExit(0 if values == {"FAULT_LATENCY_MS": "0", "FAULT_ERROR_RATE_PERCENT": "0"} else 1)
+PY
+}
+
+safety_cleanup() {
+  local rc=$?
+  if [[ "${MODE}" == "execute" && "${FAULT_ACTIVE}" == "1" ]]; then
+    set +e
+    log "SAFETY RECOVERY: benchmark exited while the injected fault may still be active"
+    set_orders_fault 0 0
+    git -C "${ROOT_DIR}" add "${ORDERS_MANIFEST}"
+    if ! git -C "${ROOT_DIR}" diff --cached --quiet; then
+      if git -C "${ROOT_DIR}" commit -m "experiment: safety recover orders-service fault" >/dev/null \
+        && git -C "${ROOT_DIR}" push origin HEAD:main >/dev/null; then
+        echo "Safety recovery was committed and pushed to main." >&2
+      else
+        echo "WARNING: automatic safety recovery could not be pushed." >&2
+        echo "MANUAL RECOVERY REQUIRED: set FAULT_LATENCY_MS=0 and FAULT_ERROR_RATE_PERCENT=0 in ${ORDERS_MANIFEST}, commit, and push main." >&2
+      fi
+    else
+      echo "Local fault profile is already clear; verify origin/main and Argo CD reconciliation." >&2
+    fi
+    set -e
+  fi
+  exit "${rc}"
+}
+trap safety_cleanup EXIT
 
 wait_for_demo_app() {
   log "waiting for Argo CD demo-app reconciliation"
@@ -100,7 +139,8 @@ collect_stage() {
 
   log "collecting ${stage} Prometheus evidence through MetalLB/Envoy Gateway"
   "${HARNESS_DIR}/agent" prometheus-evidence \
-    --url "${PROM_URL}" \
+    --url "${PROM_GATEWAY_URL}" \
+    --host-header "${PROM_HOST}" \
     --query-file "${QUERY_FILE}" \
     --namespace demo-app \
     --service platform-api \
@@ -170,7 +210,8 @@ mode=${MODE}
 platform_repo=${ROOT_DIR}
 harness_repo=${HARNESS_DIR}
 python_bin=${PYTHON_BIN}
-prometheus_url=${PROM_URL}
+prometheus_gateway_url=${PROM_GATEWAY_URL}
+prometheus_host=${PROM_HOST}
 fault_latency_ms=${FAULT_LATENCY_MS}
 fault_error_rate_percent=${FAULT_ERROR_RATE_PERCENT}
 fault_commit=${FAULT_COMMIT}
@@ -188,7 +229,7 @@ main() {
 
   log "preflight"
   log "Python interpreter: ${PYTHON_BIN}"
-  log "Prometheus evidence URL: ${PROM_URL}"
+  log "Prometheus evidence path: ${PROM_GATEWAY_URL} Host=${PROM_HOST}"
   [[ "$(git -C "${ROOT_DIR}" rev-parse --abbrev-ref HEAD)" == "main" ]] || fail "platform repo must be on main"
   git -C "${ROOT_DIR}" diff --quiet || fail "platform repo has unstaged changes"
   git -C "${ROOT_DIR}" diff --cached --quiet || fail "platform repo has staged changes"
@@ -200,11 +241,12 @@ main() {
 
   curl -k -fsS --resolve web.lab.local:8443:127.0.0.1 https://web.lab.local:8443/ >/dev/null \
     || fail "Gateway HTTPS application path is unavailable; verify the Docker TCP proxy"
-  curl -fsS "${PROM_URL}/-/ready" >/dev/null \
-    || fail "Prometheus Gateway path is unavailable. Add '127.0.0.1 prometheus.lab.local' to WSL /etc/hosts and verify the :8080 Docker Gateway proxy"
+  curl -fsS -H "Host: ${PROM_HOST}" "${PROM_GATEWAY_URL}/-/ready" >/dev/null \
+    || fail "Prometheus Gateway path is unavailable; verify the :8080 Docker Gateway proxy and HTTPRoute/prometheus-agent"
 
   log "current orders fault profile"
   orders_fault_values | tee "${RUN_DIR}/initial-fault-profile.txt"
+  initial_fault_is_clear || fail "benchmark requires a clean starting profile: FAULT_LATENCY_MS=0 and FAULT_ERROR_RATE_PERCENT=0"
 
   if [[ "${MODE}" != "execute" ]]; then
     cat <<EOF
@@ -212,7 +254,7 @@ main() {
 DRY RUN ONLY
 
 Prometheus evidence path:
-  ${PROM_URL}
+  ${PROM_GATEWAY_URL} with Host: ${PROM_HOST}
   -> local Docker TCP proxy :8080
   -> MetalLB Gateway IP :80
   -> Envoy Gateway
@@ -220,6 +262,8 @@ Prometheus evidence path:
 
 This benchmark will capture a healthy baseline, inject an orders-service GitOps fault,
 collect multi-service evidence, remediate through GitOps, and require verified recovery.
+If execution exits while the injected fault may still be active, a best-effort GitOps
+safety recovery resets FAULT_* to zero without hiding the original failure.
 
 No mutation was performed.
 To execute intentionally:
@@ -250,6 +294,7 @@ EOF
 
   log "injecting controlled orders fault through GitOps"
   set_orders_fault "${FAULT_LATENCY_MS}" "${FAULT_ERROR_RATE_PERCENT}"
+  FAULT_ACTIVE=1
   FAULT_COMMIT="$(commit_and_push "experiment: inject orders-service fault")"
   wait_for_demo_app
 
@@ -264,6 +309,7 @@ EOF
   log "remediating through GitOps"
   set_orders_fault 0 0
   RECOVERY_COMMIT="$(commit_and_push "experiment: recover orders-service fault")"
+  FAULT_ACTIVE=0
   wait_for_demo_app
 
   for attempt in $(seq 1 "${RECOVERY_MAX_POLLS}"); do
