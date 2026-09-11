@@ -25,9 +25,18 @@ SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "platform-api")
 APP_VERSION = os.getenv("APP_VERSION", "v1")
 CATALOG_URL = os.getenv("CATALOG_URL", "http://catalog.demo-app.svc.cluster.local")
 ORDERS_URL = os.getenv("ORDERS_URL", "http://orders.demo-app.svc.cluster.local")
+INVENTORY_URL = os.getenv("INVENTORY_URL", "http://inventory.demo-app.svc.cluster.local")
+PAYMENTS_URL = os.getenv("PAYMENTS_URL", "http://payments.demo-app.svc.cluster.local")
+RECOMMENDATIONS_URL = os.getenv(
+    "RECOMMENDATIONS_URL",
+    "http://recommendations.demo-app.svc.cluster.local",
+)
 DOWNSTREAM_TIMEOUT_SECONDS = float(os.getenv("DOWNSTREAM_TIMEOUT_SECONDS", "2.0"))
 FAULT_LATENCY_MS = max(0, int(os.getenv("FAULT_LATENCY_MS", "0")))
-FAULT_ERROR_RATE_PERCENT = min(100.0, max(0.0, float(os.getenv("FAULT_ERROR_RATE_PERCENT", "0"))))
+FAULT_ERROR_RATE_PERCENT = min(
+    100.0,
+    max(0.0, float(os.getenv("FAULT_ERROR_RATE_PERCENT", "0"))),
+)
 
 
 def configure_tracing() -> TracerProvider | None:
@@ -134,6 +143,16 @@ async def get_json(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     return response.json()
 
 
+async def fetch_dependencies(targets: dict[str, str]) -> dict[str, dict[str, Any]]:
+    timeout = httpx.Timeout(DOWNSTREAM_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        names = list(targets)
+        results = await asyncio.gather(
+            *(get_json(client, targets[name]) for name in names),
+        )
+    return dict(zip(names, results, strict=True))
+
+
 @app.get("/")
 async def root():
     await apply_fault_policy()
@@ -149,26 +168,22 @@ async def root():
 
     started = time.perf_counter()
     try:
-        timeout = httpx.Timeout(DOWNSTREAM_TIMEOUT_SECONDS)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            catalog_result, orders_result = await asyncio.gather(
-                get_json(client, f"{CATALOG_URL}/catalog"),
-                get_json(client, f"{ORDERS_URL}/orders"),
-            )
+        dependencies = await fetch_dependencies({
+            "catalog": f"{CATALOG_URL}/catalog",
+            "orders": f"{ORDERS_URL}/orders",
+            "recommendations": f"{RECOMMENDATIONS_URL}/recommendations",
+        })
     except (httpx.HTTPError, asyncio.TimeoutError) as exc:
         emit_log("error", "downstream_request_failed", error=str(exc))
         raise HTTPException(status_code=502, detail="downstream dependency unavailable") from exc
 
     return {
-        "message": "platform-engineering-lab operational demo",
+        "message": "platform-engineering-lab operational reference environment",
         "service": SERVICE_NAME,
         "hostname": socket.gethostname(),
         "version": APP_VERSION,
         "duration_ms": round((time.perf_counter() - started) * 1000, 2),
-        "dependencies": {
-            "catalog": catalog_result,
-            "orders": orders_result,
-        },
+        "dependencies": dependencies,
     }
 
 
@@ -190,25 +205,88 @@ async def orders():
     if SERVICE_ROLE != "orders":
         raise HTTPException(status_code=404, detail="orders endpoint unavailable for this service role")
     await apply_fault_policy()
+    try:
+        dependencies = await fetch_dependencies({
+            "inventory": f"{INVENTORY_URL}/inventory",
+            "payments": f"{PAYMENTS_URL}/payments",
+        })
+    except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+        emit_log("error", "orders_dependency_failed", error=str(exc))
+        raise HTTPException(status_code=502, detail="orders dependency unavailable") from exc
     return {
         "service": SERVICE_NAME,
         "open_orders": 7,
         "status": "available",
         "version": APP_VERSION,
+        "dependencies": dependencies,
     }
+
+
+@app.get("/inventory")
+async def inventory():
+    if SERVICE_ROLE != "inventory":
+        raise HTTPException(status_code=404, detail="inventory endpoint unavailable for this service role")
+    await apply_fault_policy()
+    return {
+        "service": SERVICE_NAME,
+        "available_skus": 37,
+        "reserved_skus": 5,
+        "status": "available",
+        "version": APP_VERSION,
+    }
+
+
+@app.get("/payments")
+async def payments():
+    if SERVICE_ROLE != "payments":
+        raise HTTPException(status_code=404, detail="payments endpoint unavailable for this service role")
+    await apply_fault_policy()
+    return {
+        "service": SERVICE_NAME,
+        "authorization": "ready",
+        "provider": "reference-sandbox",
+        "status": "available",
+        "version": APP_VERSION,
+    }
+
+
+@app.get("/recommendations")
+async def recommendations():
+    if SERVICE_ROLE != "recommendations":
+        raise HTTPException(status_code=404, detail="recommendations endpoint unavailable for this service role")
+    await apply_fault_policy()
+    return {
+        "service": SERVICE_NAME,
+        "recommended_skus": ["sku-101", "sku-204", "sku-305"],
+        "status": "available",
+        "version": APP_VERSION,
+    }
+
+
+def dependency_targets() -> dict[str, str]:
+    if SERVICE_ROLE == "gateway":
+        return {
+            "catalog": f"{CATALOG_URL}/health/ready",
+            "orders": f"{ORDERS_URL}/health/ready",
+            "recommendations": f"{RECOMMENDATIONS_URL}/health/ready",
+        }
+    if SERVICE_ROLE == "orders":
+        return {
+            "inventory": f"{INVENTORY_URL}/health/ready",
+            "payments": f"{PAYMENTS_URL}/health/ready",
+        }
+    return {}
 
 
 @app.get("/dependency-health")
 async def dependency_health():
-    if SERVICE_ROLE != "gateway":
+    targets = dependency_targets()
+    if not targets:
         return {"service": SERVICE_NAME, "dependencies": {}}
 
     results: dict[str, Any] = {}
     async with httpx.AsyncClient(timeout=httpx.Timeout(DOWNSTREAM_TIMEOUT_SECONDS)) as client:
-        for name, url in {
-            "catalog": f"{CATALOG_URL}/health/ready",
-            "orders": f"{ORDERS_URL}/health/ready",
-        }.items():
+        for name, url in targets.items():
             try:
                 response = await client.get(url)
                 results[name] = {"status": response.status_code, "healthy": response.is_success}
