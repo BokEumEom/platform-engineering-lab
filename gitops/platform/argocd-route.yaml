@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  server.insecure: "true"
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-platform-gateway-to-argocd-server
+  namespace: argocd
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: platform-system
+  to:
+    - group: ""
+      kind: Service
+      name: argocd-server
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: argocd
+  namespace: platform-system
+spec:
+  parentRefs:
+    - name: platform-gateway
+      sectionName: https
+  hostnames:
+    - argocd.lab.local
+  rules:
+    - backendRefs:
+        - name: argocd-server
+          namespace: argocd
+          port: 80
