@@ -64,6 +64,8 @@ spec:
               value: "http://catalog.demo-app.svc.cluster.local"
             - name: ORDERS_URL
               value: "http://orders.demo-app.svc.cluster.local"
+            - name: RECOMMENDATIONS_URL
+              value: "http://recommendations.demo-app.svc.cluster.local"
             - name: DOWNSTREAM_TIMEOUT_SECONDS
               value: "2.0"
             - name: FAULT_LATENCY_MS
