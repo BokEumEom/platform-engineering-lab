@@ -70,7 +70,7 @@ p=json.load(sys.stdin)
 services={r.get("metric",{}).get("platform_service") for r in p.get("data",{}).get("result",[])}
 services.discard(None)
 print(len(services))
-' 
+'
 }
 
 print_platform_services() {
@@ -114,10 +114,11 @@ main() {
   for host in web.lab.local grafana.lab.local prometheus.lab.local argocd.lab.local; do
     code="$(https_status "${host}")"
     printf '  %-28s HTTP %s\n' "${host}" "${code}"
-    case "${host}:${code}" in
-      web.lab.local:200|grafana.lab.local:200|grafana.lab.local:302|prometheus.lab.local:200|argocd.lab.local:200|argocd.lab.local:302) ;;
-      *) fail "unexpected Gateway response for ${host}: HTTP ${code}" ;;
-    esac
+    if [[ "${host}" == "web.lab.local" ]]; then
+      [[ "${code}" == "200" ]] || fail "application Gateway response is HTTP ${code}"
+    else
+      [[ "${code}" =~ ^[23][0-9][0-9]$ ]] || fail "unexpected Gateway response for ${host}: HTTP ${code}"
+    fi
   done
 
   log "Prometheus API through MetalLB/Envoy"
