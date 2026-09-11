@@ -13,8 +13,7 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="${OUTPUT_ROOT}/${RUN_ID}"
 ORDERS_MANIFEST="${ROOT_DIR}/gitops/apps/demo-app/orders.yaml"
 QUERY_FILE="${ROOT_DIR}/observability/agent-prometheus-queries.json"
-PROM_PORT="${PROM_PORT:-19090}"
-PROM_URL="http://127.0.0.1:${PROM_PORT}"
+PROM_URL="${PROM_URL:-http://prometheus.lab.local:8080}"
 FAULT_LATENCY_MS="${FAULT_LATENCY_MS:-800}"
 FAULT_ERROR_RATE_PERCENT="${FAULT_ERROR_RATE_PERCENT:-25}"
 TRAFFIC_REQUESTS="${TRAFFIC_REQUESTS:-80}"
@@ -23,65 +22,31 @@ BASELINE_POLL_SECONDS="${BASELINE_POLL_SECONDS:-15}"
 RECOVERY_MAX_POLLS="${RECOVERY_MAX_POLLS:-28}"
 RECOVERY_POLL_SECONDS="${RECOVERY_POLL_SECONDS:-15}"
 PYTHON_BIN=""
-
-PF_PID=""
 FAULT_COMMIT=""
 RECOVERY_COMMIT=""
 
-log() {
-  printf '\n[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"
-}
-
-fail() {
-  echo "ERROR: $*" >&2
-  exit 1
-}
-
-cleanup() {
-  if [[ -n "${PF_PID}" ]] && kill -0 "${PF_PID}" 2>/dev/null; then
-    kill "${PF_PID}" 2>/dev/null || true
-  fi
-}
-trap cleanup EXIT
-
-require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
-}
+log() { printf '\n[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
+fail() { echo "ERROR: $*" >&2; exit 1; }
+require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"; }
 
 resolve_python() {
-  if command -v python3 >/dev/null 2>&1; then
-    command -v python3
-    return 0
-  fi
-  if command -v python >/dev/null 2>&1; then
-    command -v python
-    return 0
-  fi
+  if command -v python3 >/dev/null 2>&1; then command -v python3; return; fi
+  if command -v python >/dev/null 2>&1; then command -v python; return; fi
   fail "required Python interpreter not found: install python3 or provide python"
 }
 
 set_orders_fault() {
-  local latency="$1"
-  local error_rate="$2"
+  local latency="$1" error_rate="$2"
   "${PYTHON_BIN}" - "${ORDERS_MANIFEST}" "${latency}" "${error_rate}" <<'PY'
 from pathlib import Path
-import re
-import sys
-
+import re, sys
 path = Path(sys.argv[1])
-latency = sys.argv[2]
-error_rate = sys.argv[3]
 text = path.read_text(encoding="utf-8")
-
-for name, value in {
-    "FAULT_LATENCY_MS": latency,
-    "FAULT_ERROR_RATE_PERCENT": error_rate,
-}.items():
+for name, value in {"FAULT_LATENCY_MS": sys.argv[2], "FAULT_ERROR_RATE_PERCENT": sys.argv[3]}.items():
     pattern = rf'(?ms)(- name: {re.escape(name)}\s*\n\s*value:\s*")[^"]*(")'
     text, count = re.subn(pattern, rf'\g<1>{value}\g<2>', text, count=1)
     if count != 1:
         raise SystemExit(f"expected exactly one {name} literal in {path}")
-
 path.write_text(text, encoding="utf-8")
 PY
 }
@@ -89,9 +54,7 @@ PY
 orders_fault_values() {
   "${PYTHON_BIN}" - "${ORDERS_MANIFEST}" <<'PY'
 from pathlib import Path
-import re
-import sys
-
+import re, sys
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 for name in ("FAULT_LATENCY_MS", "FAULT_ERROR_RATE_PERCENT"):
     match = re.search(rf'(?ms)- name: {name}\s*\n\s*value:\s*"([^"]*)"', text)
@@ -101,13 +64,14 @@ PY
 
 wait_for_demo_app() {
   log "waiting for Argo CD demo-app reconciliation"
-  local i sync health
-  for i in $(seq 1 40); do
+  local sync health
+  for _ in $(seq 1 40); do
     sync="$(kubectl get application demo-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
     health="$(kubectl get application demo-app -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
     if [[ "${sync}" == "Synced" && "${health}" == "Healthy" ]]; then
-      kubectl rollout status deployment/orders -n demo-app --timeout=120s >/dev/null
-      kubectl rollout status deployment/web -n demo-app --timeout=120s >/dev/null
+      for d in web catalog orders inventory payments recommendations; do
+        kubectl rollout status "deployment/${d}" -n demo-app --timeout=120s >/dev/null
+      done
       log "demo-app reconciled: ${sync}/${health}"
       return 0
     fi
@@ -117,20 +81,11 @@ wait_for_demo_app() {
 }
 
 generate_traffic() {
-  local count="$1"
-  local ok=0
-  local failed=0
-  local code
+  local count="$1" ok=0 failed=0 code
   log "generating ${count} requests through MetalLB/Envoy HTTPS path"
   for _ in $(seq 1 "${count}"); do
-    code="$(curl -k -sS -o /dev/null -w '%{http_code}' \
-      --resolve web.lab.local:8443:127.0.0.1 \
-      https://web.lab.local:8443/ || true)"
-    if [[ "${code}" == "200" ]]; then
-      ok=$((ok + 1))
-    else
-      failed=$((failed + 1))
-    fi
+    code="$(curl -k -sS -o /dev/null -w '%{http_code}' --resolve web.lab.local:8443:127.0.0.1 https://web.lab.local:8443/ || true)"
+    if [[ "${code}" == "200" ]]; then ok=$((ok + 1)); else failed=$((failed + 1)); fi
     sleep 0.1
   done
   printf 'traffic: ok=%s failed=%s\n' "${ok}" "${failed}" | tee -a "${RUN_DIR}/traffic.log"
@@ -138,16 +93,12 @@ generate_traffic() {
 
 collect_stage() {
   local stage="$1"
-  local k8s="${RUN_DIR}/${stage}-k8s.json"
-  local prom="${RUN_DIR}/${stage}-prometheus.json"
-  local review="${RUN_DIR}/${stage}-review.json"
+  local k8s="${RUN_DIR}/${stage}-k8s.json" prom="${RUN_DIR}/${stage}-prometheus.json" review="${RUN_DIR}/${stage}-review.json"
 
   log "collecting ${stage} Kubernetes evidence"
-  "${HARNESS_DIR}/agent" k8s-evidence \
-    --namespace demo-app \
-    --output "${k8s}"
+  "${HARNESS_DIR}/agent" k8s-evidence --namespace demo-app --output "${k8s}"
 
-  log "collecting ${stage} Prometheus evidence"
+  log "collecting ${stage} Prometheus evidence through MetalLB/Envoy Gateway"
   "${HARNESS_DIR}/agent" prometheus-evidence \
     --url "${PROM_URL}" \
     --query-file "${QUERY_FILE}" \
@@ -156,107 +107,60 @@ collect_stage() {
     --output "${prom}"
 
   log "running ${stage} Ops review"
-  "${HARNESS_DIR}/agent" ops-review \
-    --k8s "${k8s}" \
-    --prometheus "${prom}" \
-    --output "${review}"
+  "${HARNESS_DIR}/agent" ops-review --k8s "${k8s}" --prometheus "${prom}" --output "${review}" || true
 
   "${PYTHON_BIN}" - "${review}" <<'PY'
-import json
-import sys
+import json, sys
 from pathlib import Path
-
 review = json.loads(Path(sys.argv[1]).read_text())
 print(f"state={review.get('state')} release_guidance={review.get('release_guidance')}")
 missing = review.get("evidence", {}).get("missing_required", [])
 if missing:
     print("  missing_required:")
-    for ref in missing:
-        print(f"    - {ref}")
+    for ref in missing: print(f"    - {ref}")
 for finding in review.get("findings", []):
     print(f"  {finding.get('severity')} {finding.get('id')}: {finding.get('observation')}")
 PY
 }
 
 baseline_healthy() {
-  local review="${RUN_DIR}/baseline-review.json"
-  [[ -f "${review}" ]] || return 1
-  "${PYTHON_BIN}" - "${review}" <<'PY'
-import json
-import sys
+  "${PYTHON_BIN}" - "${RUN_DIR}/baseline-review.json" <<'PY'
+import json, sys
 from pathlib import Path
-
-review = json.loads(Path(sys.argv[1]).read_text())
-missing = review.get("evidence", {}).get("missing_required", [])
-blocking = [f for f in review.get("findings", []) if f.get("severity") in {"P0", "P1"}]
-healthy = review.get("state") == "healthy" and not missing and not blocking
-raise SystemExit(0 if healthy else 1)
+r = json.loads(Path(sys.argv[1]).read_text())
+missing = r.get("evidence", {}).get("missing_required", [])
+blocking = [f for f in r.get("findings", []) if f.get("severity") in {"P0", "P1"}]
+raise SystemExit(0 if r.get("state") == "healthy" and not missing and not blocking else 1)
 PY
 }
 
-prometheus_service() {
-  if [[ -n "${PROMETHEUS_SERVICE:-}" ]]; then
-    printf '%s\n' "${PROMETHEUS_SERVICE}"
-    return
-  fi
-  kubectl get svc -n monitoring -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
-    | grep -E 'prometheus$' \
-    | head -n 1
-}
-
-start_prometheus_proxy() {
-  local service
-  service="$(prometheus_service)"
-  [[ -n "${service}" ]] || fail "unable to resolve Prometheus Service; set PROMETHEUS_SERVICE explicitly"
-  log "starting read-only Prometheus port-forward: ${service} -> ${PROM_PORT}"
-  kubectl port-forward -n monitoring "svc/${service}" "${PROM_PORT}:9090" \
-    >"${RUN_DIR}/prometheus-port-forward.log" 2>&1 &
-  PF_PID=$!
-  for _ in $(seq 1 20); do
-    if curl -fsS "${PROM_URL}/-/ready" >/dev/null 2>&1; then
-      return
-    fi
-    sleep 1
-  done
-  fail "Prometheus port-forward did not become ready"
-}
-
-commit_and_push() {
-  local message="$1"
-  git -C "${ROOT_DIR}" add "${ORDERS_MANIFEST}"
-  if git -C "${ROOT_DIR}" diff --cached --quiet; then
-    fail "no GitOps change was staged for: ${message}"
-  fi
-  git -C "${ROOT_DIR}" commit -m "${message}"
-  git -C "${ROOT_DIR}" push origin HEAD:main
-  git -C "${ROOT_DIR}" rev-parse HEAD
-}
-
 fault_detected() {
-  local review="${RUN_DIR}/fault-review.json"
-  [[ -f "${review}" ]] || return 1
-  "${PYTHON_BIN}" - "${review}" <<'PY'
-import json
-import sys
+  "${PYTHON_BIN}" - "${RUN_DIR}/fault-review.json" <<'PY'
+import json, sys
 from pathlib import Path
 r = json.loads(Path(sys.argv[1]).read_text())
 ids = {f.get("id") for f in r.get("findings", [])}
-required = {"dependency.orders_fault_injection_correlated"}
-raise SystemExit(0 if required <= ids and r.get("state") in {"acute", "at_risk"} else 1)
+raise SystemExit(0 if "dependency.orders_fault_injection_correlated" in ids and r.get("state") in {"acute", "at_risk"} else 1)
 PY
 }
 
 recovery_verified() {
-  local review="${RUN_DIR}/recovery-review.json"
-  [[ -f "${review}" ]] || return 1
-  "${PYTHON_BIN}" - "${review}" <<'PY'
-import json
-import sys
+  "${PYTHON_BIN}" - "${RUN_DIR}/recovery-review.json" <<'PY'
+import json, sys
 from pathlib import Path
 r = json.loads(Path(sys.argv[1]).read_text())
 blocking = [f for f in r.get("findings", []) if f.get("severity") in {"P0", "P1"}]
 raise SystemExit(0 if r.get("state") == "healthy" and not blocking else 1)
 PY
+}
+
+commit_and_push() {
+  local message="$1"
+  git -C "${ROOT_DIR}" add "${ORDERS_MANIFEST}"
+  git -C "${ROOT_DIR}" diff --cached --quiet && fail "no GitOps change was staged for: ${message}"
+  git -C "${ROOT_DIR}" commit -m "${message}" >/dev/null
+  git -C "${ROOT_DIR}" push origin HEAD:main >/dev/null
+  git -C "${ROOT_DIR}" rev-parse HEAD
 }
 
 write_metadata() {
@@ -266,6 +170,7 @@ mode=${MODE}
 platform_repo=${ROOT_DIR}
 harness_repo=${HARNESS_DIR}
 python_bin=${PYTHON_BIN}
+prometheus_url=${PROM_URL}
 fault_latency_ms=${FAULT_LATENCY_MS}
 fault_error_rate_percent=${FAULT_ERROR_RATE_PERCENT}
 fault_commit=${FAULT_COMMIT}
@@ -279,11 +184,11 @@ main() {
   [[ -n "${HARNESS_DIR}" && -x "${HARNESS_DIR}/agent" ]] || fail "Infrastructure Engineering Agent not found; set HARNESS_DIR"
   [[ -f "${ORDERS_MANIFEST}" ]] || fail "orders manifest not found"
   [[ -f "${QUERY_FILE}" ]] || fail "Prometheus query profile not found"
-
   mkdir -p "${RUN_DIR}"
 
   log "preflight"
   log "Python interpreter: ${PYTHON_BIN}"
+  log "Prometheus evidence URL: ${PROM_URL}"
   [[ "$(git -C "${ROOT_DIR}" rev-parse --abbrev-ref HEAD)" == "main" ]] || fail "platform repo must be on main"
   git -C "${ROOT_DIR}" diff --quiet || fail "platform repo has unstaged changes"
   git -C "${ROOT_DIR}" diff --cached --quiet || fail "platform repo has staged changes"
@@ -291,11 +196,12 @@ main() {
   [[ "$(git -C "${ROOT_DIR}" rev-parse HEAD)" == "$(git -C "${ROOT_DIR}" rev-parse origin/main)" ]] || fail "local main must match origin/main"
 
   kubectl get application demo-app -n argocd >/dev/null
-  kubectl get deployment web catalog orders -n demo-app >/dev/null
+  kubectl get deployment web catalog orders inventory payments recommendations -n demo-app >/dev/null
 
-  if ! curl -k -fsS --resolve web.lab.local:8443:127.0.0.1 https://web.lab.local:8443/ >/dev/null; then
-    fail "Gateway HTTPS path is unavailable; verify the Docker TCP proxy before the benchmark"
-  fi
+  curl -k -fsS --resolve web.lab.local:8443:127.0.0.1 https://web.lab.local:8443/ >/dev/null \
+    || fail "Gateway HTTPS application path is unavailable; verify the Docker TCP proxy"
+  curl -fsS "${PROM_URL}/-/ready" >/dev/null \
+    || fail "Prometheus Gateway path is unavailable. Add '127.0.0.1 prometheus.lab.local' to WSL /etc/hosts and verify the :8080 Docker Gateway proxy"
 
   log "current orders fault profile"
   orders_fault_values | tee "${RUN_DIR}/initial-fault-profile.txt"
@@ -305,19 +211,15 @@ main() {
 
 DRY RUN ONLY
 
-This benchmark will:
-  1. capture baseline Kubernetes + Prometheus evidence;
-  2. wait for Prometheus scrape/recording-rule freshness and require a healthy baseline;
-  3. commit/push orders fault injection to main;
-  4. wait for Argo CD reconciliation and generate Gateway traffic;
-  5. run the Infrastructure Engineering Agent Ops review;
-  6. commit/push remediation (FAULT_* back to zero);
-  7. collect fresh evidence until P0/P1 symptoms clear;
-  8. run ops-compare and require verified_recovery=true.
+Prometheus evidence path:
+  ${PROM_URL}
+  -> local Docker TCP proxy :8080
+  -> MetalLB Gateway IP :80
+  -> Envoy Gateway
+  -> monitoring-kube-prometheus-prometheus:9090
 
-Requested fault:
-  FAULT_LATENCY_MS=${FAULT_LATENCY_MS}
-  FAULT_ERROR_RATE_PERCENT=${FAULT_ERROR_RATE_PERCENT}
+This benchmark will capture a healthy baseline, inject an orders-service GitOps fault,
+collect multi-service evidence, remediate through GitOps, and require verified recovery.
 
 No mutation was performed.
 To execute intentionally:
@@ -327,10 +229,7 @@ EOF
     exit 0
   fi
 
-  [[ "${OPS_BENCHMARK_ACK:-}" == "platform-engineering-lab" ]] \
-    || fail "set OPS_BENCHMARK_ACK=platform-engineering-lab for intentional mutation"
-
-  start_prometheus_proxy
+  [[ "${OPS_BENCHMARK_ACK:-}" == "platform-engineering-lab" ]] || fail "set OPS_BENCHMARK_ACK=platform-engineering-lab for intentional mutation"
 
   log "warming baseline telemetry"
   local baseline_ready=0
@@ -347,10 +246,7 @@ EOF
       sleep "${BASELINE_POLL_SECONDS}"
     fi
   done
-  if [[ "${baseline_ready}" != "1" ]]; then
-    write_metadata
-    fail "baseline evidence stayed incomplete/unhealthy; no fault was injected. Inspect ${RUN_DIR}/baseline-review.json and baseline-prometheus.json"
-  fi
+  [[ "${baseline_ready}" == "1" ]] || { write_metadata; fail "baseline evidence stayed incomplete/unhealthy; no fault was injected"; }
 
   log "injecting controlled orders fault through GitOps"
   set_orders_fault "${FAULT_LATENCY_MS}" "${FAULT_ERROR_RATE_PERCENT}"
@@ -360,13 +256,8 @@ EOF
   for attempt in $(seq 1 8); do
     generate_traffic "${TRAFFIC_REQUESTS}"
     collect_stage fault
-    if fault_detected; then
-      log "Ops Agent detected correlated orders fault"
-      break
-    fi
-    if [[ "${attempt}" == "8" ]]; then
-      fail "Ops Agent did not detect the expected orders fault after repeated fresh evidence"
-    fi
+    if fault_detected; then log "Ops Agent detected correlated orders fault"; break; fi
+    [[ "${attempt}" != "8" ]] || fail "Ops Agent did not detect the expected orders fault after repeated fresh evidence"
     sleep 15
   done
 
@@ -378,13 +269,8 @@ EOF
   for attempt in $(seq 1 "${RECOVERY_MAX_POLLS}"); do
     generate_traffic 25
     collect_stage recovery
-    if recovery_verified; then
-      log "fresh evidence is operationally healthy"
-      break
-    fi
-    if [[ "${attempt}" == "${RECOVERY_MAX_POLLS}" ]]; then
-      fail "recovery metrics did not clear within the benchmark guard window"
-    fi
+    if recovery_verified; then log "fresh evidence is operationally healthy"; break; fi
+    [[ "${attempt}" != "${RECOVERY_MAX_POLLS}" ]] || fail "recovery metrics did not clear within the benchmark guard window"
     sleep "${RECOVERY_POLL_SECONDS}"
   done
 
@@ -395,22 +281,13 @@ EOF
     --output "${RUN_DIR}/revalidation.json"
 
   write_metadata
-
   "${PYTHON_BIN}" - "${RUN_DIR}/revalidation.json" <<'PY'
-import json
-import sys
+import json, sys
 from pathlib import Path
-result = json.loads(Path(sys.argv[1]).read_text())
-print(json.dumps({
-    "verified_recovery": result.get("verified_recovery"),
-    "resolved": result.get("resolved"),
-    "persistent_blocking": result.get("persistent_blocking"),
-    "new_blocking": result.get("new_blocking"),
-    "learning_candidates": result.get("learning_candidates"),
-}, indent=2))
-raise SystemExit(0 if result.get("verified_recovery") else 1)
+r = json.loads(Path(sys.argv[1]).read_text())
+print(json.dumps({k: r.get(k) for k in ("verified_recovery", "resolved", "persistent_blocking", "new_blocking", "learning_candidates")}, indent=2))
+raise SystemExit(0 if r.get("verified_recovery") else 1)
 PY
-
   log "BENCHMARK PASS: ${RUN_DIR}"
 }
 
