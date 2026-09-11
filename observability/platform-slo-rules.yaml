@@ -241,12 +241,12 @@ spec:
 
         - alert: PlatformDependencyHighErrorRatio
           expr: |
-            platform:http_error_ratio:5m{platform_service=~"catalog-service|orders-service"} > 0.05
+            platform:http_error_ratio:5m{platform_service!="platform-api"} > 0.05
           for: 5m
           labels:
             severity: warning
             service: platform-demo-dependency
           annotations:
-            summary: "a platform demo dependency has more than 5% 5xx responses"
-            description: "Inspect service-level metrics, traces and structured logs before changing scaling or restart policy."
+            summary: "a platform dependency has more than 5% 5xx responses"
+            description: "The alert is topology-generic for every non-public platform_service. Inspect service metrics, traces and structured logs before changing scaling or restart policy."
             runbook_url: "https://github.com/BokEumEom/platform-engineering-lab/blob/main/docs/13-ops-agent-runbook.md"
