@@ -69,6 +69,9 @@ jobs:
               Path("gitops/apps/demo-app/deployment.yaml"),
               Path("gitops/apps/demo-app/catalog.yaml"),
               Path("gitops/apps/demo-app/orders.yaml"),
+              Path("gitops/apps/demo-app/inventory.yaml"),
+              Path("gitops/apps/demo-app/payments.yaml"),
+              Path("gitops/apps/demo-app/recommendations.yaml"),
           ]
 
           sha = os.environ["GITHUB_SHA"]
@@ -105,7 +108,10 @@ jobs:
           git add \
             gitops/apps/demo-app/deployment.yaml \
             gitops/apps/demo-app/catalog.yaml \
-            gitops/apps/demo-app/orders.yaml
+            gitops/apps/demo-app/orders.yaml \
+            gitops/apps/demo-app/inventory.yaml \
+            gitops/apps/demo-app/payments.yaml \
+            gitops/apps/demo-app/recommendations.yaml
 
           git diff --cached --quiet && exit 0
 
