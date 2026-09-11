@@ -7,6 +7,9 @@ resources:
   - service.yaml
   - catalog.yaml
   - orders.yaml
+  - inventory.yaml
+  - payments.yaml
+  - recommendations.yaml
   - httproute.yaml
   - http-redirect.yaml
   - hpa.yaml
