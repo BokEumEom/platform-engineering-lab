@@ -14,6 +14,21 @@
     "signal": "target_up",
     "query": "min(up{namespace=\"demo-app\",platform_service=\"orders-service\"})"
   },
+  "inventory_target_up": {
+    "component": "inventory-service",
+    "signal": "target_up",
+    "query": "min(up{namespace=\"demo-app\",platform_service=\"inventory-service\"})"
+  },
+  "payments_target_up": {
+    "component": "payments-service",
+    "signal": "target_up",
+    "query": "min(up{namespace=\"demo-app\",platform_service=\"payments-service\"})"
+  },
+  "recommendations_target_up": {
+    "component": "recommendations-service",
+    "signal": "target_up",
+    "query": "min(up{namespace=\"demo-app\",platform_service=\"recommendations-service\"})"
+  },
   "platform_api_request_rate_5m": {
     "component": "platform-api",
     "signal": "request_rate_5m",
@@ -28,6 +43,21 @@
     "component": "orders-service",
     "signal": "request_rate_5m",
     "query": "platform:http_requests:rate5m{platform_service=\"orders-service\"}"
+  },
+  "inventory_request_rate_5m": {
+    "component": "inventory-service",
+    "signal": "request_rate_5m",
+    "query": "platform:http_requests:rate5m{platform_service=\"inventory-service\"}"
+  },
+  "payments_request_rate_5m": {
+    "component": "payments-service",
+    "signal": "request_rate_5m",
+    "query": "platform:http_requests:rate5m{platform_service=\"payments-service\"}"
+  },
+  "recommendations_request_rate_5m": {
+    "component": "recommendations-service",
+    "signal": "request_rate_5m",
+    "query": "platform:http_requests:rate5m{platform_service=\"recommendations-service\"}"
   },
   "platform_api_error_ratio_5m": {
     "component": "platform-api",
@@ -49,6 +79,21 @@
     "signal": "error_ratio_5m",
     "query": "platform:http_error_ratio:5m{platform_service=\"orders-service\"}"
   },
+  "inventory_error_ratio_5m": {
+    "component": "inventory-service",
+    "signal": "error_ratio_5m",
+    "query": "platform:http_error_ratio:5m{platform_service=\"inventory-service\"}"
+  },
+  "payments_error_ratio_5m": {
+    "component": "payments-service",
+    "signal": "error_ratio_5m",
+    "query": "platform:http_error_ratio:5m{platform_service=\"payments-service\"}"
+  },
+  "recommendations_error_ratio_5m": {
+    "component": "recommendations-service",
+    "signal": "error_ratio_5m",
+    "query": "platform:http_error_ratio:5m{platform_service=\"recommendations-service\"}"
+  },
   "platform_api_p95_latency_5m": {
     "component": "platform-api",
     "signal": "p95_latency_seconds_5m",
@@ -63,6 +108,21 @@
     "component": "orders-service",
     "signal": "p95_latency_seconds_5m",
     "query": "platform:http_p95_latency_seconds:5m{platform_service=\"orders-service\"}"
+  },
+  "inventory_p95_latency_5m": {
+    "component": "inventory-service",
+    "signal": "p95_latency_seconds_5m",
+    "query": "platform:http_p95_latency_seconds:5m{platform_service=\"inventory-service\"}"
+  },
+  "payments_p95_latency_5m": {
+    "component": "payments-service",
+    "signal": "p95_latency_seconds_5m",
+    "query": "platform:http_p95_latency_seconds:5m{platform_service=\"payments-service\"}"
+  },
+  "recommendations_p95_latency_5m": {
+    "component": "recommendations-service",
+    "signal": "p95_latency_seconds_5m",
+    "query": "platform:http_p95_latency_seconds:5m{platform_service=\"recommendations-service\"}"
   },
   "platform_api_burn_rate_5m": {
     "component": "platform-api",
