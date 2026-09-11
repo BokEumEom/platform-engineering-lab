@@ -84,6 +84,31 @@ verified recovery | persistent issue | regression
 
 Dependency analysis is topology-generic. The Agent discovers application services from Kubernetes Deployment evidence (`OTEL_SERVICE_NAME`) and matches Prometheus observations by `component` and `signal`; new services require telemetry/query coverage rather than hardcoded review branches.
 
+## Live reference-environment smoke test
+
+Before any controlled failure benchmark, validate the actual local cluster and evidence path:
+
+```bash
+cd ~/platform-engineering-lab
+bash ops/smoke/reference-environment.sh
+```
+
+The smoke test is read-only with respect to infrastructure desired state. It verifies:
+
+```text
+Argo applications Synced/Healthy
+→ Gateway namespace admission
+→ HTTPRoutes Accepted/ResolvedRefs
+→ six Deployments rolled out
+→ web/grafana/prometheus/argocd reachable through MetalLB + Envoy
+→ Prometheus raw metrics for all six services
+→ error-ratio and P95 recording rules for all six services
+→ Harness Kubernetes + Prometheus evidence
+→ complete baseline Ops review
+```
+
+Runtime evidence is written under `.ops-smoke/<run-id>/` and ignored by Git.
+
 ## First live Ops benchmark
 
 The first controlled benchmark injects latency/5xx into `orders-service` through GitOps and requires the Agent to localize the dependency failure and verify recovery from fresh evidence.
@@ -116,26 +141,52 @@ healthy baseline
 → verified recovery or failure
 ```
 
+The benchmark requires the initial `orders-service` fault profile to be zero. If execution terminates while its injected fault may still be active, it performs a best-effort GitOps safety recovery and preserves the original failure status.
+
 Runtime evidence is written under `.ops-benchmark/<run-id>/` and is not committed to Git.
 
-## Grafana access through the real platform path
+## Shared Gateway access
 
-Grafana is exposed through the shared Gateway instead of its own Kubernetes `LoadBalancer` Service:
+Application and operational UIs/APIs use the shared Gateway instead of ad-hoc Kubernetes `LoadBalancer` Services or per-tool `kubectl port-forward` sessions.
 
 ```text
+https://web.lab.local:8443
 https://grafana.lab.local:8443
-  → local Docker TCP proxy
+https://prometheus.lab.local:8443
+https://argocd.lab.local:8443
+```
+
+Local WSL/kind routing uses Docker TCP proxies while preserving the real platform path:
+
+```text
+127.0.0.1:8443
+  → Docker TCP proxy
   → MetalLB :443
   → Envoy Gateway
-  → HTTPRoute/grafana
-  → monitoring-grafana
+  → HTTPS HTTPRoute
 ```
+
+The Infrastructure Engineering Harness reads the Prometheus API without `kubectl port-forward`:
+
+```text
+127.0.0.1:8080
+Host: prometheus.lab.local
+  → Docker TCP proxy
+  → MetalLB :80
+  → Envoy Gateway
+  → HTTPRoute/prometheus-agent
+  → Prometheus :9090
+```
+
+Gateway listeners only accept Routes from namespaces labeled `gateway-access: "true"`. `demo-app`, `monitoring` and `platform-system` are managed accordingly. This is enforced in CI because a missing namespace label can make a syntactically valid HTTPRoute invisible to Envoy and produce a 404.
 
 For Windows browser access add:
 
 ```text
-127.0.0.1 grafana.lab.local
 127.0.0.1 web.lab.local
+127.0.0.1 grafana.lab.local
+127.0.0.1 prometheus.lab.local
+127.0.0.1 argocd.lab.local
 ```
 
 ## Operational dashboards
@@ -202,6 +253,7 @@ platform-engineering-lab/
 ├── gitops/platform/                # shared platform resources
 ├── argocd/                         # Argo Applications
 ├── observability/                  # metrics/logs/traces/SLO/dashboards
+├── ops/smoke/                      # live reference-environment preflight
 ├── ops/benchmarks/                 # live Ops Agent benchmarks
 ├── platform/                       # platform component values
 ├── docs/                           # executable architecture/runbooks
@@ -219,6 +271,8 @@ Start with the operational documents when evaluating the Agent:
 - [14 — Operational Observability and Agent Rollout](docs/14-operational-observability.md)
 - [15 — Ops Agent Benchmark](docs/15-ops-agent-benchmark.md)
 - [16 — Reference Environment Roadmap](docs/16-reference-environment-roadmap.md)
+- [17 — Gateway Route Namespace Access Invariant](docs/17-gateway-access-invariant.md)
+- [18 — Reference Environment Smoke Test](docs/18-reference-environment-smoke-test.md)
 
 Earlier documents (`00`–`09`) preserve the build-up of Kubernetes, Gateway API, observability, tracing and TLS foundations.
 
@@ -228,15 +282,16 @@ Already established in repository/runtime history:
 
 - GitOps desired state with automated sync/self-heal/prune;
 - immutable GHCR image deployment by commit SHA;
-- Gateway API + MetalLB application path;
+- Gateway API + MetalLB application and operational access path;
 - Prometheus ServiceMonitor / Envoy PodMonitor;
 - Grafana dashboards as code;
 - SLO/error-budget recording rules;
 - OpenTelemetry + Tempo distributed tracing;
 - Loki + Alloy log/event pipeline desired state;
-- read-only Kubernetes and Prometheus Agent adapters;
+- read-only Kubernetes and Gateway-routed Prometheus Agent adapters;
 - evidence-backed `ops-review` and `ops-compare`;
 - controlled fault injection and recovery benchmark;
+- reference-environment smoke verification;
 - regression fixtures for Agent decision behavior.
 
 A repository manifest is **not** treated as proof that the corresponding runtime behavior is healthy. Runtime claims remain pending until fresh evidence verifies them.
