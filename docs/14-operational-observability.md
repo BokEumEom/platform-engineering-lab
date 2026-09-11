@@ -1,63 +1,101 @@
 # Operational Observability and Ops Agent Rollout
 
-This document upgrades the lab telemetry into a small operational environment for Infrastructure Engineering Agent review.
+This document describes the current reference environment used by the Infrastructure Engineering Agent. It is not a static learning lab: the environment exists to generate realistic Kubernetes/GitOps/observability evidence, controlled failures, remediation proposals and post-change verification.
 
-It is deliberately split into two ownership layers:
+## 1. Current service topology
+
+The reference application now contains six independently deployable services:
+
+```text
+Client
+  -> MetalLB
+  -> Envoy Gateway
+  -> platform-api
+       ├─> catalog-service
+       ├─> recommendations-service
+       └─> orders-service
+             ├─> inventory-service
+             └─> payments-service
+```
+
+Every service has its own:
+
+- Deployment;
+- Service;
+- ServiceAccount;
+- HPA;
+- PDB;
+- Prometheus target identity (`platform_service`);
+- OpenTelemetry `service.name`;
+- structured JSON logs;
+- controlled `FAULT_LATENCY_MS` / `FAULT_ERROR_RATE_PERCENT` settings.
+
+The same immutable application image is reused with different `SERVICE_ROLE` values. This keeps the reference environment small enough for local kind while still creating fan-out and multi-hop dependency behavior.
+
+Expected Deployments:
+
+```text
+web
+catalog
+orders
+inventory
+payments
+recommendations
+```
+
+## 2. Ownership model
 
 ```text
 Helm
-  -> installs/upgrades telemetry engines
-     Prometheus/Grafana/Alertmanager
-     Tempo/OTel Collector
-     Loki
-     Alloy
+  -> telemetry engines
+     Prometheus / Grafana / Alertmanager
+     Tempo / OpenTelemetry Collector
+     Loki / Alloy
 
 Argo CD
-  -> owns operational policy/config
+  -> desired-state resources
+     application Deployments / Services / HPAs / PDBs
+     Gateway API resources
      ServiceMonitor / PodMonitor
      PrometheusRule
-     SLO recording rules
      Grafana dashboards
-     Gateway routes
+
+Infrastructure Engineering Agent
+  -> read-only evidence by default
+  -> diagnosis / risk assessment / proposal
+  -> approved mutation only through an explicit execution path
+  -> fresh post-check before completion
 ```
 
-## 1. Pull the desired state
+A successful Git/Argo deployment is not accepted as recovery evidence by itself.
+
+## 3. Pull and reconcile
 
 ```bash
 cd ~/platform-engineering-lab
 git pull
-```
 
-## 2. Update the platform and demo applications
-
-The platform Gateway now serves wildcard `*.lab.local` HTTPS and includes a Grafana route. The demo application contains three services:
-
-```text
-platform-api
-  -> catalog-service
-  -> orders-service
-```
-
-Bootstrap/update the Argo Applications if this local cluster does not manage the `argocd/` directory through an App-of-Apps:
-
-```bash
 kubectl apply -f argocd/platform.yaml
 kubectl apply -f argocd/demo-app.yaml
 kubectl apply -f argocd/observability.yaml
 ```
 
-Force discovery after new CRDs/components have been installed when necessary:
+Check:
 
 ```bash
-for app in platform demo-app observability-config; do
-  kubectl annotate application "$app" \
-    -n argocd \
-    argocd.argoproj.io/refresh=hard \
-    --overwrite
-done
+kubectl get application -n argocd
+kubectl get deploy,pod,svc,hpa,pdb -n demo-app
 ```
 
-## 3. Upgrade Prometheus/Grafana/Alertmanager
+Expected Argo state:
+
+```text
+platform              Synced / Healthy
+demo-app              Synced / Healthy
+observability-config  Synced / Healthy
+```
+
+## 4. Prometheus / Grafana / Alertmanager
 
 ```bash
 helm repo add prometheus-community \
@@ -72,7 +110,7 @@ helm upgrade --install monitoring \
   -f observability/kube-prometheus-stack-values.yaml
 ```
 
-This local operating profile currently uses:
+Current local operating profile:
 
 ```text
 Prometheus retention:   24h / 2GB
@@ -81,22 +119,15 @@ Grafana persistence:    disabled
 Prometheus persistence: disabled
 ```
 
-Persistence remains disabled until the Agent collects storage/capacity evidence. This is not a durable production monitoring architecture.
+This is deliberately a local reference environment, not an HA monitoring architecture.
 
-## 4. Install Loki
-
-The repository pins the current validated chart profile used by this project:
-
-```text
-Grafana Community Loki chart: 18.12.1
-Loki:                        3.7.7
-```
-
-Install:
+## 5. Loki and Alloy
 
 ```bash
 helm repo add grafana-community \
   https://grafana-community.github.io/helm-charts
+helm repo add grafana \
+  https://grafana.github.io/helm-charts
 helm repo update
 
 helm upgrade --install loki \
@@ -104,22 +135,6 @@ helm upgrade --install loki \
   --version 18.12.1 \
   -n monitoring \
   -f observability/loki-values.yaml
-```
-
-The local profile is intentionally Monolithic with one replica and filesystem storage. It is suitable for this Agent/Ops environment, not an HA production Loki design.
-
-## 5. Install Grafana Alloy
-
-```text
-Grafana Alloy chart: 1.12.1
-Alloy:              v1.19.2
-```
-
-Install:
-
-```bash
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo update
 
 helm upgrade --install alloy \
   grafana/alloy \
@@ -128,59 +143,23 @@ helm upgrade --install alloy \
   -f observability/alloy-values.yaml
 ```
 
-Alloy collects:
+Alloy collects Pod logs and Kubernetes Events through the Kubernetes API. Application logs keep `trace_id` and `span_id` as fields rather than Loki index labels.
 
-- Pod stdout/stderr through the Kubernetes API;
-- Kubernetes Events;
-- stable namespace/pod/container/app/workload labels;
-- no privileged node filesystem log mount.
+## 6. Gateway traffic path
 
-Application JSON logs contain `trace_id` and `span_id` as log fields, not Loki index labels.
-
-## 6. Verify telemetry components
-
-```bash
-kubectl get pods -n monitoring
-kubectl get svc -n monitoring
-```
-
-Check Loki and Alloy specifically:
-
-```bash
-kubectl get pods -n monitoring | grep -E 'loki|alloy'
-```
-
-Argo observability config:
-
-```bash
-kubectl get application observability-config -n argocd
-kubectl get servicemonitor,podmonitor,prometheusrule -A
-```
-
-Expected operational rule/dashboard resources include:
+User-path validation must go through the real platform boundary:
 
 ```text
-platform-service-slo
-platform-operations-dashboard
-kubernetes-operations-dashboard
-platform-logs-dashboard
+https://web.lab.local:8443
+  -> local Docker TCP proxy
+  -> MetalLB :443
+  -> Envoy Gateway
+  -> HTTPRoute
+  -> platform-api
+  -> internal dependency graph
 ```
 
-## 7. Verify the three-service application
-
-```bash
-kubectl get deploy,pod,svc,hpa,pdb -n demo-app
-```
-
-Expected Deployments:
-
-```text
-web
-catalog
-orders
-```
-
-Generate user traffic through the actual Gateway/MetalLB path:
+Generate traffic:
 
 ```bash
 for i in {1..30}; do
@@ -190,38 +169,22 @@ for i in {1..30}; do
 done
 ```
 
-A normal response contains both dependency results.
+A healthy response includes results from `catalog`, `orders` and `recommendations`; the `orders` result includes `inventory` and `payments` dependency results.
 
-Direct dependency checks from the gateway Pod can be used only for diagnosis:
+## 7. Grafana through MetalLB / Envoy Gateway
 
-```bash
-POD=$(kubectl get pod -n demo-app -l app=web -o jsonpath='{.items[0].metadata.name}')
-
-kubectl exec -n demo-app "$POD" -- \
-  python -c 'import urllib.request; print(urllib.request.urlopen("http://catalog/catalog").read().decode())'
-
-kubectl exec -n demo-app "$POD" -- \
-  python -c 'import urllib.request; print(urllib.request.urlopen("http://orders/orders").read().decode())'
-```
-
-## 8. Grafana through MetalLB, not kubectl port-forward
-
-Grafana is exposed through the existing platform Gateway rather than its own LoadBalancer:
+Grafana uses the existing Gateway rather than its own `LoadBalancer` Service:
 
 ```text
-Browser/curl
-  -> local Docker HTTPS proxy :8443
-  -> MetalLB Gateway ExternalIP :443
+https://grafana.lab.local:8443
+  -> Docker TCP proxy
+  -> MetalLB
   -> Envoy Gateway
   -> HTTPRoute/grafana
-  -> monitoring-grafana Service
+  -> monitoring-grafana
 ```
 
-This is **not** Kubernetes `kubectl port-forward`; it preserves the MetalLB and Envoy Gateway traffic path.
-
-The existing Docker HTTPS proxy can be reused because it is TCP/SNI transparent.
-
-Add a local hosts entry for browser use:
+For Windows browser access add:
 
 ```text
 127.0.0.1 grafana.lab.local
@@ -233,138 +196,81 @@ Then open:
 https://grafana.lab.local:8443
 ```
 
-The local certificate is self-signed, so a browser trust warning is expected unless the lab CA/certificate is trusted locally.
-
-Curl validation:
-
-```bash
-curl -k -I \
-  --resolve grafana.lab.local:8443:127.0.0.1 \
-  https://grafana.lab.local:8443/login
-```
-
-Gateway status:
-
-```bash
-kubectl get httproute -n monitoring
-kubectl describe httproute grafana -n monitoring
-```
-
-## 9. Grafana dashboards
-
-The operational dashboards are provisioned as code through the Grafana dashboard sidecar.
+## 8. Operational dashboards
 
 ### Platform Operations · Service Health
 
-Use for service/SLO triage:
+The dashboard discovers services from the `platform_service` label, so the same panels automatically include all six services.
 
-- 1h availability;
-- lab error-budget model;
+Use it for:
+
 - request rate by service;
 - 5xx ratio by service;
 - P95 latency by service;
-- multi-window burn rate;
-- HPA current/desired replicas;
-- CPU request utilization;
-- memory limit utilization;
-- container restarts;
-- OTel pipeline health;
-- Envoy live state.
+- platform-api availability / error budget;
+- HPA desired/current replicas;
+- CPU and memory pressure;
+- restarts;
+- OpenTelemetry pipeline health;
+- Envoy health.
 
 ### Kubernetes Operations · Capacity & Reliability
 
-Use for infrastructure triage:
-
-- Ready Nodes;
-- Pending Pods;
-- unavailable Deployment replicas;
-- OOMKilled containers;
-- node CPU/memory;
-- Pods per node;
-- restart rate;
-- PDB disruption allowance;
-- HPA saturation;
-- namespace CPU/memory;
-- Deployment ready/desired replicas.
+Use it for node readiness, Pending Pods, unavailable replicas, OOMKilled, PDB allowance, HPA saturation and namespace resource pressure.
 
 ### Platform Operations · Logs & Events
 
-Use for evidence correlation:
+Use it for structured application logs, Kubernetes Events and log-to-Tempo `trace_id` correlation.
 
-- log volume by app;
-- application error logs;
-- structured application logs;
-- Kubernetes Events;
-- error-only request logs;
-- log `trace_id` -> Tempo trace link.
+## 9. Prometheus service evidence contract
 
-## 10. Verify metrics and SLO recording rules
+`ServiceMonitor` copies each Service's `platform_service` label onto Prometheus targets. Recording rules aggregate by that label.
 
-Prometheus can still be port-forwarded **only as an Agent API adapter endpoint**, not as the user access method for Grafana.
+For every discovered application dependency the Agent expects at least:
 
-Resolve its actual Service name:
-
-```bash
-kubectl get svc -n monitoring | grep prometheus
+```text
+target_up
+error_ratio_5m
+p95_latency_seconds_5m
 ```
 
-Then:
+Current dependency components:
 
-```bash
-kubectl port-forward \
-  -n monitoring \
-  svc/<PROMETHEUS_SERVICE> \
-  9090:9090
+```text
+catalog-service
+orders-service
+inventory-service
+payments-service
+recommendations-service
 ```
 
-Useful PromQL:
+The query profile is:
 
-```promql
-platform:http_requests:rate5m
-platform:http_error_ratio:5m
-platform:http_p95_latency_seconds:5m
-platform:slo_burn_rate:5m{platform_service="platform-api"}
-platform:slo_burn_rate:1h{platform_service="platform-api"}
+```text
+observability/agent-prometheus-queries.json
 ```
 
-The `platform-api` lab policy is explicitly 99.9% availability for exercising error-budget operations. It is not a generic production SLO recommendation.
+Healthy services with no 5xx series are explicitly materialized as an error ratio of `0`; an empty error vector is not treated as healthy evidence.
 
-## 11. Verify distributed traces
+## 10. Distributed tracing target
 
-Generate fresh HTTPS traffic and inspect Tempo.
-
-A healthy request should include a graph similar to:
+A healthy request should produce a graph similar to:
 
 ```text
 Envoy ingress
   -> platform-api GET /
-       -> HTTP client span / catalog
-            -> catalog-service GET /catalog
-       -> HTTP client span / orders
-            -> orders-service GET /orders
+       ├─> catalog-service GET /catalog
+       ├─> recommendations-service GET /recommendations
+       └─> orders-service GET /orders
+             ├─> inventory-service GET /inventory
+             └─> payments-service GET /payments
 ```
 
-This validates W3C trace-context propagation through the service dependency graph.
+This topology gives the Agent enough depth to distinguish a public symptom from a first-hop or second-hop dependency failure.
 
-## 12. Verify logs and trace correlation
+## 11. Live Agent review
 
-In Grafana Explore -> Loki:
-
-```logql
-{namespace="demo-app"} | json
-```
-
-Errors:
-
-```logql
-{namespace="demo-app"} | json | level="error"
-```
-
-A structured log carrying a valid `trace_id` should expose a Tempo link through the datasource derived field.
-
-## 13. First live Ops Agent review
-
-From `infrastructure-engineering-harness`:
+From the Harness repository:
 
 ```bash
 cd ~/infrastructure-engineering-harness
@@ -387,7 +293,7 @@ git pull
   --output /tmp/platform-review.json
 ```
 
-Review output is intentionally conservative:
+Review states:
 
 ```text
 healthy
@@ -396,34 +302,61 @@ acute
 insufficient_evidence
 ```
 
-`insufficient_evidence` is preferred over guessing when a required query/provider is unavailable.
+The Ops reviewer discovers dependency services from Kubernetes Deployment evidence (`OTEL_SERVICE_NAME`) and matches their Prometheus evidence by `component` and `signal`. New reference services therefore require query coverage, not hardcoded review logic.
 
-## 14. Incident / Agent revalidation
+## 12. Controlled benchmark and revalidation
 
-Use `docs/13-ops-agent-runbook.md` for controlled fault experiments and triage.
-
-After a GitOps remediation, collect **fresh** evidence and run another review.
+The first live benchmark remains the orders latency/5xx experiment:
 
 ```bash
-./agent ops-compare \
-  --before /tmp/platform-review-before.json \
-  --after /tmp/platform-review-after.json \
-  --output /tmp/platform-revalidation.json
+OPS_BENCHMARK_ACK=platform-engineering-lab \
+  bash ops/benchmarks/orders-fault/run.sh --execute
 ```
 
-Completion requires no new regression and independent post-change evidence. A deployment success by itself is not recovery evidence.
+The benchmark performs:
 
-## 15. Current production-readiness boundary
+```text
+healthy baseline
+-> GitOps fault injection
+-> Argo reconciliation
+-> real Gateway traffic
+-> Kubernetes + Prometheus evidence
+-> Ops review
+-> GitOps remediation
+-> fresh evidence
+-> ops-compare
+-> verified recovery or reopen
+```
 
-This environment is designed to evaluate a production-style operating model, but the local stack is not itself production-grade infrastructure.
+Evidence is written under `.ops-benchmark/<run-id>/` and is intentionally excluded from Git.
 
-Known intentional gaps:
+## 13. Agent improvement contract
 
-- Prometheus/Loki/Tempo are not yet durable/HA;
-- Alertmanager still has a null receiver until a real notification destination is selected;
-- public synthetic probing is not yet the primary SLI;
-- control-plane scrape targets remain reduced for Docker Desktop/kind;
-- Agent production mutations remain human/change-review gated;
-- self-improvement produces reviewable learning candidates rather than editing Skills automatically.
+Failures in the Agent or observability contract become reproducible evaluation assets:
 
-These gaps should remain visible instead of being hidden behind a `production ready` label.
+```text
+runtime failure / evidence gap
+-> learning_candidate
+-> reproducible fixture or live benchmark
+-> adapter / review / Skill / Context proposal
+-> regression suite
+-> human review
+-> merge only when existing behavior does not regress
+```
+
+The Agent does not silently rewrite its own policies or Skills.
+
+## 14. Current readiness boundary
+
+The reference environment is intended to exercise production-style operating behavior, but it is not itself production infrastructure.
+
+Current intentional gaps include:
+
+- local kind rather than managed multi-AZ Kubernetes;
+- non-HA / non-durable local Prometheus, Loki and Tempo;
+- Alertmanager receiver still requires a real notification destination;
+- production write adapters and approval workflow are not yet enabled;
+- Terraform ownership and policy-gated mutation are the next reference-environment layer;
+- evaluation coverage is being expanded from the first live orders benchmark to a broader failure corpus.
+
+The goal is to make these boundaries explicit and progressively close them with evidence, rather than label the environment `production ready` prematurely.
