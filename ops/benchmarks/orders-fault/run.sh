@@ -77,6 +77,25 @@ raise SystemExit(0 if values == {"FAULT_LATENCY_MS": "0", "FAULT_ERROR_RATE_PERC
 PY
 }
 
+live_orders_fault_profile() {
+  kubectl get deployment orders -n demo-app -o json 2>/dev/null | \
+    "${PYTHON_BIN}" -c '
+import json, sys
+try:
+    deployment = json.load(sys.stdin)
+except Exception:
+    print("MISSING MISSING")
+    raise SystemExit(0)
+values = {}
+for container in deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []):
+    for env in container.get("env", []):
+        name = env.get("name")
+        if name in {"FAULT_LATENCY_MS", "FAULT_ERROR_RATE_PERCENT"}:
+            values[name] = env.get("value")
+print(values.get("FAULT_LATENCY_MS", "MISSING"), values.get("FAULT_ERROR_RATE_PERCENT", "MISSING"))
+' || true
+}
+
 safety_cleanup() {
   local rc=$?
   if [[ "${MODE}" == "execute" && "${FAULT_ACTIVE}" == "1" ]]; then
@@ -101,22 +120,42 @@ safety_cleanup() {
 }
 trap safety_cleanup EXIT
 
+revision_matches() {
+  local observed="$1" expected="$2"
+  [[ -n "${observed}" && ( "${observed}" == "${expected}" || "${expected}" == "${observed}"* || "${observed}" == "${expected}"* ) ]]
+}
+
 wait_for_demo_app() {
-  log "waiting for Argo CD demo-app reconciliation"
-  local sync health
-  for _ in $(seq 1 40); do
+  local expected_revision="$1" expected_latency="$2" expected_error_rate="$3"
+  log "waiting for Argo CD demo-app reconciliation of ${expected_revision:0:7}"
+  local sync health revision live_latency live_error attempt
+  for attempt in $(seq 1 60); do
     sync="$(kubectl get application demo-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
     health="$(kubectl get application demo-app -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
-    if [[ "${sync}" == "Synced" && "${health}" == "Healthy" ]]; then
+    revision="$(kubectl get application demo-app -n argocd -o jsonpath='{.status.sync.revision}' 2>/dev/null || true)"
+    read -r live_latency live_error <<<"$(live_orders_fault_profile)"
+
+    if [[ "${sync}" == "Synced" && "${health}" == "Healthy" ]] \
+      && revision_matches "${revision}" "${expected_revision}" \
+      && [[ "${live_latency}" == "${expected_latency}" && "${live_error}" == "${expected_error_rate}" ]]; then
       for d in web catalog orders inventory payments recommendations; do
         kubectl rollout status "deployment/${d}" -n demo-app --timeout=120s >/dev/null
       done
-      log "demo-app reconciled: ${sync}/${health}"
+      read -r live_latency live_error <<<"$(live_orders_fault_profile)"
+      [[ "${live_latency}" == "${expected_latency}" && "${live_error}" == "${expected_error_rate}" ]] \
+        || fail "orders live fault profile changed during rollout verification"
+      log "demo-app reconciled: revision=${revision:0:7} ${sync}/${health} orders_fault=${live_latency}/${live_error}"
       return 0
+    fi
+
+    if (( attempt % 6 == 0 )); then
+      printf '  waiting: sync=%s health=%s revision=%s orders_fault=%s/%s expected=%s/%s\n' \
+        "${sync:-?}" "${health:-?}" "${revision:0:7}" "${live_latency:-?}" "${live_error:-?}" \
+        "${expected_latency}" "${expected_error_rate}"
     fi
     sleep 5
   done
-  fail "demo-app did not reach Synced/Healthy"
+  fail "demo-app did not reconcile expected revision/profile: revision=${expected_revision:0:7} orders_fault=${expected_latency}/${expected_error_rate}"
 }
 
 generate_traffic() {
@@ -262,6 +301,8 @@ Prometheus evidence path:
 
 This benchmark will capture a healthy baseline, inject an orders-service GitOps fault,
 collect multi-service evidence, remediate through GitOps, and require verified recovery.
+The runner waits for Argo CD to observe the exact pushed revision and for the live
+orders Deployment FAULT_* profile to match before generating experiment traffic.
 If execution exits while the injected fault may still be active, a best-effort GitOps
 safety recovery resets FAULT_* to zero without hiding the original failure.
 
@@ -296,7 +337,7 @@ EOF
   set_orders_fault "${FAULT_LATENCY_MS}" "${FAULT_ERROR_RATE_PERCENT}"
   FAULT_ACTIVE=1
   FAULT_COMMIT="$(commit_and_push "experiment: inject orders-service fault")"
-  wait_for_demo_app
+  wait_for_demo_app "${FAULT_COMMIT}" "${FAULT_LATENCY_MS}" "${FAULT_ERROR_RATE_PERCENT}"
 
   for attempt in $(seq 1 8); do
     generate_traffic "${TRAFFIC_REQUESTS}"
@@ -310,7 +351,7 @@ EOF
   set_orders_fault 0 0
   RECOVERY_COMMIT="$(commit_and_push "experiment: recover orders-service fault")"
   FAULT_ACTIVE=0
-  wait_for_demo_app
+  wait_for_demo_app "${RECOVERY_COMMIT}" 0 0
 
   for attempt in $(seq 1 "${RECOVERY_MAX_POLLS}"); do
     generate_traffic 25
