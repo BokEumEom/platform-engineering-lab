@@ -137,6 +137,7 @@ jobs:
         run: |
           bash -n ops/smoke/reference-environment.sh
           bash -n ops/benchmarks/orders-fault/run.sh
+          bash -n ops/benchmarks/hpa-quota/run.sh
 
       - name: Guard healthy default fault profile
         shell: bash
