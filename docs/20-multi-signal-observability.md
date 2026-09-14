@@ -45,7 +45,7 @@ The observability stage verifies:
 5. Tempo contains recent traces.
 6. Prometheus can expose the current firing-alert count and Alertmanager's status API is reachable.
 7. When the adjacent Harness checkout is present, its read-only Loki and Tempo evidence adapters return normalized observations with no unavailable sources.
-8. A Loki `trace_id` must match a Tempo trace in the same run before the full smoke is considered multi-signal complete.
+8. Loki `trace_id` values are followed with bounded exact Tempo `/api/traces/{trace_id}` lookups; at least one successful exact correlation is required before the full smoke is considered multi-signal complete.
 
 Evidence is written beneath `.ops-smoke/<UTC>-full/` and is intentionally ignored by Git.
 
@@ -63,7 +63,7 @@ Harness read-only adapters:
 - `adapters/evidence/loki.py`
 - `adapters/evidence/tempo.py`
 
-The Harness also has deterministic enrichment-only correlation in `runtime/multisignal_review.py`. It extracts structured log `trace_id` values, matches them against Tempo search results and records the associated log service/event/level plus Tempo summary. The output explicitly keeps:
+The Harness also has deterministic enrichment-only correlation in `runtime/multisignal_review.py`. It extracts structured log `trace_id` values, follows them with exact Tempo trace lookups, and records the associated log service/event/level plus trace evidence. The output explicitly keeps:
 
 ```text
 decision_effect = enrichment_only
@@ -73,7 +73,38 @@ release_guidance = original ops-review guidance
 
 This means log/trace evidence can strengthen or expose gaps in an explanation without silently changing the current Kubernetes + Prometheus blocking decision. Promotion into blocking incident logic requires scenario/evaluation evidence showing better root-cause localization without unacceptable regressions.
 
-The full smoke writes `multi-signal-review.json` and requires at least one real Loki-to-Tempo trace correlation from fresh local traffic.
+The full smoke writes `multi-signal-review.json` and requires at least one real Loki-to-Tempo exact trace correlation from fresh local traffic.
+
+## Verified runtime result — 2026-09-14
+
+A live local run completed the full path successfully:
+
+```text
+Prometheus service coverage   6/6
+Loki application logs         100 entries
+Tempo recent traces           20
+Harness Loki entries          50
+Harness Tempo search traces   23
+exact Tempo traces observed   4
+exact Tempo not found         0
+source unavailable            []
+correlation count             4
+multi-signal status           correlated
+base Ops state                healthy
+release guidance              continue
+decision effect               enrichment_only
+```
+
+Final gates:
+
+```text
+REFERENCE ENVIRONMENT SMOKE PASS
+MULTI-SIGNAL OBSERVABILITY SMOKE PASS
+MULTI-SIGNAL CORRELATION PASS
+FULL REFERENCE ENVIRONMENT SMOKE PASS
+```
+
+The detailed runtime report is `reports/2026-09-14-multisignal-observability-smoke.md`.
 
 ## Current local-lab durability boundaries
 
