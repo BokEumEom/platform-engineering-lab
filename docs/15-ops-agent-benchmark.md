@@ -1,10 +1,43 @@
 # End-to-End Ops Agent Benchmark
 
-Status: **implemented / live runtime execution required**
+Status: **verified live PASS on 2026-09-14 / runner hardening continues**
 
 This benchmark evaluates whether the Infrastructure Engineering Agent behaves like a useful read-only Ops/SRE diagnostic agent against a real Kubernetes/GitOps environment.
 
 It is not satisfied by static manifests, mocked metrics, or a successful deployment alone.
+
+## Verified live result
+
+The first full local execution completed successfully on 2026-09-14.
+
+```text
+healthy baseline
+→ orders-service GitOps fault
+→ Agent state=acute / release_guidance=hold
+→ correlated orders root cause
+→ GitOps remediation
+→ fresh healthy evidence
+→ ops-compare
+→ verified_recovery=true
+```
+
+Final comparison:
+
+```text
+resolved=6
+persistent_blocking=[]
+new_blocking=[]
+verified_recovery=true
+```
+
+Approximate first-run timings:
+
+```text
+time to correlated detection: ~2m
+remediation-to-healthy:       ~8m10s
+```
+
+The detailed result and the learning extracted from that run are recorded in [`reports/2026-09-14-orders-fault-benchmark.md`](../reports/2026-09-14-orders-fault-benchmark.md).
 
 ## Benchmark question
 
@@ -90,6 +123,23 @@ Recovery is another Git commit returning both values to `0`.
 
 No `kubectl set env`, imperative Deployment patch, or restart-first remediation is used.
 
+## Reconciliation contract
+
+`Synced/Healthy` alone is not sufficient proof that the just-pushed experiment revision is live.
+
+The first verified run exposed a race where Argo CD briefly continued reporting the previous revision as `Synced/Healthy`, allowing a rollout check against the previous Deployment generation to succeed.
+
+The runner now requires all of the following before experiment traffic starts:
+
+```text
+Argo .status.sync.revision matches the pushed commit
+AND Argo state is Synced/Healthy
+AND live orders Deployment FAULT_* values match the expected state
+AND Deployment rollout completes
+```
+
+This applies both to fault injection and remediation.
+
 ## Expected evidence during fault
 
 Kubernetes evidence should show `orders` similar to:
@@ -148,7 +198,7 @@ Recovery is not:
 Argo Synced == incident closed
 ```
 
-The runner waits for new observations after remediation and then runs `ops-compare`.
+The runner waits for the exact recovery revision and live Deployment profile, then keeps collecting fresh observations until the blocking telemetry clears. It finally runs `ops-compare`.
 
 Required completion:
 
