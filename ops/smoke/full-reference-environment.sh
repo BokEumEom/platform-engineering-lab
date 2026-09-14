@@ -11,6 +11,7 @@ OUT_DIR="${OUT_ROOT}/platform" \
   bash "${ROOT_DIR}/ops/smoke/reference-environment.sh"
 
 OBS_OUT_DIR="${OUT_ROOT}/observability" \
+OPS_REVIEW_FILE="${OUT_ROOT}/platform/review.json" \
   bash "${ROOT_DIR}/ops/smoke/observability.sh"
 
 printf '\nFULL REFERENCE ENVIRONMENT SMOKE PASS\n'
