@@ -53,14 +53,56 @@ assert_namespace_gateway_access() {
   [[ "${value}" == "true" ]] || fail "namespace ${ns} is not allowed to attach routes to platform-gateway"
 }
 
+assert_gateway_programmed() {
+  local payload summary rc
+  payload="$(kubectl get gateway platform-gateway -n platform-system -o json)"
+  set +e
+  summary="$(printf '%s' "${payload}" | "${PYTHON_BIN}" -c '
+import json,sys
+obj=json.load(sys.stdin)
+conditions=(obj.get("status") or {}).get("conditions") or []
+programmed=[c.get("status") for c in conditions if c.get("type")=="Programmed"]
+true_count=sum(v=="True" for v in programmed)
+total=len(programmed)
+print(f"{true_count}/{total}")
+raise SystemExit(0 if total > 0 and true_count == total else 1)
+')"
+  rc=$?
+  set -e
+  printf '  platform-gateway Programmed=%s\n' "${summary}"
+  [[ "${rc}" -eq 0 ]] || fail "platform-gateway is not Programmed"
+}
+
 assert_route() {
-  local ns="$1" route="$2"
-  local accepted resolved
-  accepted="$(kubectl get httproute "${route}" -n "${ns}" -o jsonpath='{range .status.parents[*].conditions[?(@.type=="Accepted")]}{.status}{end}' 2>/dev/null || true)"
-  resolved="$(kubectl get httproute "${route}" -n "${ns}" -o jsonpath='{range .status.parents[*].conditions[?(@.type=="ResolvedRefs")]}{.status}{end}' 2>/dev/null || true)"
-  printf '  %-24s/%-20s Accepted=%-5s ResolvedRefs=%s\n' "${ns}" "${route}" "${accepted:-?}" "${resolved:-?}"
-  [[ "${accepted}" == "True" && "${resolved}" == "True" ]] \
-    || fail "HTTPRoute ${ns}/${route} is not Accepted/ResolvedRefs"
+  local ns="$1" route="$2" payload summary rc
+  payload="$(kubectl get httproute "${route}" -n "${ns}" -o json)"
+  set +e
+  summary="$(printf '%s' "${payload}" | "${PYTHON_BIN}" -c '
+import json,sys
+obj=json.load(sys.stdin)
+parents=(obj.get("status") or {}).get("parents") or []
+accepted=[]
+resolved=[]
+healthy=0
+for parent in parents:
+    conditions={c.get("type"): c.get("status") for c in (parent.get("conditions") or [])}
+    a=conditions.get("Accepted")
+    r=conditions.get("ResolvedRefs")
+    if a is not None:
+        accepted.append(a)
+    if r is not None:
+        resolved.append(r)
+    if a=="True" and r=="True":
+        healthy += 1
+at=sum(v=="True" for v in accepted)
+rt=sum(v=="True" for v in resolved)
+print(f"Accepted={at}/{len(accepted)} ResolvedRefs={rt}/{len(resolved)} healthyParents={healthy}/{len(parents)}")
+raise SystemExit(0 if parents and healthy == len(parents) else 1)
+')"
+  rc=$?
+  set -e
+  printf '  %-24s/%-20s %s\n' "${ns}" "${route}" "${summary}"
+  [[ "${rc}" -eq 0 ]] || fail "HTTPRoute ${ns}/${route} is not Accepted/ResolvedRefs"
 }
 
 count_platform_services() {
@@ -97,9 +139,7 @@ main() {
   for ns in platform-system demo-app monitoring; do assert_namespace_gateway_access "${ns}"; done
 
   log "Gateway and HTTPRoutes"
-  programmed="$(kubectl get gateway platform-gateway -n platform-system -o jsonpath='{range .status.conditions[?(@.type=="Programmed")]}{.status}{end}' 2>/dev/null || true)"
-  printf '  platform-gateway Programmed=%s\n' "${programmed:-?}"
-  [[ "${programmed}" == "True" ]] || fail "platform-gateway is not Programmed"
+  assert_gateway_programmed
   assert_route demo-app web
   assert_route monitoring grafana
   assert_route monitoring prometheus
