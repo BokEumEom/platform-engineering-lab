@@ -64,9 +64,9 @@ spec:
             - name: DOWNSTREAM_TIMEOUT_SECONDS
               value: "2.0"
             - name: FAULT_LATENCY_MS
-              value: "0"
+              value: "800"
             - name: FAULT_ERROR_RATE_PERCENT
-              value: "0"
+              value: "25"
             - name: OTEL_SERVICE_NAME
               value: "orders-service"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
