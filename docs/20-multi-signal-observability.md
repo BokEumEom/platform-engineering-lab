@@ -30,7 +30,7 @@ HTTP routes on port 8080 are intended for bounded read-only Agent API access in 
 
 ## Canonical smoke test
 
-Run both the existing platform/runtime checks and the multi-signal observability checks with one command:
+Run the platform/runtime, observability and cross-source correlation checks with one command:
 
 ```bash
 bash ops/smoke/full-reference-environment.sh
@@ -45,6 +45,7 @@ The observability stage verifies:
 5. Tempo contains recent traces.
 6. Prometheus can expose the current firing-alert count and Alertmanager's status API is reachable.
 7. When the adjacent Harness checkout is present, its read-only Loki and Tempo evidence adapters return normalized observations with no unavailable sources.
+8. A Loki `trace_id` must match a Tempo trace in the same run before the full smoke is considered multi-signal complete.
 
 Evidence is written beneath `.ops-smoke/<UTC>-full/` and is intentionally ignored by Git.
 
@@ -62,7 +63,17 @@ Harness read-only adapters:
 - `adapters/evidence/loki.py`
 - `adapters/evidence/tempo.py`
 
-Until live smoke has repeatedly proven the new sources, `ops-review` continues to make blocking operational decisions from Kubernetes + Prometheus evidence. Loki and Tempo are enrichment evidence first. The next promotion step is deterministic metric -> log -> trace correlation backed by evaluation fixtures; it must not silently change existing incident thresholds.
+The Harness also has deterministic enrichment-only correlation in `runtime/multisignal_review.py`. It extracts structured log `trace_id` values, matches them against Tempo search results and records the associated log service/event/level plus Tempo summary. The output explicitly keeps:
+
+```text
+decision_effect = enrichment_only
+ops_state = original ops-review state
+release_guidance = original ops-review guidance
+```
+
+This means log/trace evidence can strengthen or expose gaps in an explanation without silently changing the current Kubernetes + Prometheus blocking decision. Promotion into blocking incident logic requires scenario/evaluation evidence showing better root-cause localization without unacceptable regressions.
+
+The full smoke writes `multi-signal-review.json` and requires at least one real Loki-to-Tempo trace correlation from fresh local traffic.
 
 ## Current local-lab durability boundaries
 
