@@ -195,6 +195,8 @@ PY
       --host-header "${TEMPO_HOST}" \
       --search-file "${ROOT_DIR}/observability/agent-tempo-searches.json" \
       --lookback-seconds 900 \
+      --trace-id-file "${OUT_DIR}/loki-evidence.json" \
+      --max-trace-ids 20 \
       --output "${OUT_DIR}/tempo-evidence.json"
     "${PYTHON_BIN}" - "${OUT_DIR}/loki-evidence.json" "${OUT_DIR}/tempo-evidence.json" <<'PY'
 import json,sys
@@ -204,10 +206,14 @@ tempo=json.loads(Path(sys.argv[2]).read_text())
 unavailable=[o.get("id") for b in (loki,tempo) for o in b.get("observations",[]) if o.get("status")=="unavailable"]
 log_entries=sum(int((o.get("value") or {}).get("entry_count") or 0) for o in loki.get("observations",[]))
 trace_count=sum(int((o.get("value") or {}).get("trace_count") or 0) for o in tempo.get("observations",[]))
+exact_observed=sum(1 for o in tempo.get("observations",[]) if o.get("signal")=="trace_by_id" and o.get("status")=="observed")
+exact_not_found=sum(1 for o in tempo.get("observations",[]) if o.get("signal")=="trace_by_id" and o.get("status")=="not_found")
+requested=(tempo.get("scope") or {}).get("exact_trace_ids_requested",0)
 print(f"  Harness Loki entries={log_entries}")
-print(f"  Harness Tempo traces={trace_count}")
+print(f"  Harness Tempo search traces={trace_count}")
+print(f"  exact Tempo follow-up: requested={requested} observed={exact_observed} not_found={exact_not_found}")
 print(f"  unavailable={unavailable}")
-raise SystemExit(0 if not unavailable and log_entries > 0 and trace_count > 0 else 1)
+raise SystemExit(0 if not unavailable and log_entries > 0 and trace_count > 0 and exact_observed > 0 else 1)
 PY
   else
     log "Harness Loki/Tempo evidence CLI not found; skipped adapter smoke"
