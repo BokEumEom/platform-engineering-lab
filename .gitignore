@@ -1,2 +1,8 @@
 .ops-benchmark/
 .ops-smoke/
+
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
