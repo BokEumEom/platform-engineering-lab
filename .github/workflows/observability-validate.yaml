@@ -1,0 +1,59 @@
+name: Observability Validate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "gitops/platform/*route.yaml"
+      - "observability/agent-loki-queries.json"
+      - "observability/agent-tempo-searches.json"
+      - "ops/smoke/observability.sh"
+      - "ops/smoke/full-reference-environment.sh"
+      - "docs/20-multi-signal-observability.md"
+      - ".github/workflows/observability-validate.yaml"
+  pull_request:
+    paths:
+      - "gitops/platform/*route.yaml"
+      - "observability/agent-loki-queries.json"
+      - "observability/agent-tempo-searches.json"
+      - "ops/smoke/observability.sh"
+      - "ops/smoke/full-reference-environment.sh"
+      - "docs/20-multi-signal-observability.md"
+      - ".github/workflows/observability-validate.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+
+      - name: Validate Gateway manifests
+        run: kubectl kustomize gitops/platform >/tmp/platform.yaml
+
+      - name: Validate evidence query JSON
+        run: |
+          python -m json.tool observability/agent-loki-queries.json >/dev/null
+          python -m json.tool observability/agent-tempo-searches.json >/dev/null
+
+      - name: Validate observability smoke entrypoints
+        run: |
+          bash -n ops/smoke/observability.sh
+          bash -n ops/smoke/full-reference-environment.sh
+
+      - name: Guard observability routes
+        shell: bash
+        run: |
+          for route in alertmanager-agent alertmanager loki-agent loki tempo-agent tempo; do
+            grep -R -q "name: ${route}" gitops/platform/*route.yaml \
+              || { echo "missing HTTPRoute ${route}"; exit 1; }
+          done
