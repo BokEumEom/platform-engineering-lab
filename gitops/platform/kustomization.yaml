@@ -11,4 +11,7 @@ resources:
   - gateway.yaml
   - grafana-route.yaml
   - prometheus-route.yaml
+  - alertmanager-route.yaml
+  - loki-route.yaml
+  - tempo-route.yaml
   - argocd-route.yaml
