@@ -8,6 +8,7 @@ on:
       - "observability/agent-loki-queries.json"
       - "observability/agent-tempo-searches.json"
       - "ops/smoke/observability.sh"
+      - "ops/smoke/multisignal-correlation.sh"
       - "ops/smoke/full-reference-environment.sh"
       - "docs/20-multi-signal-observability.md"
       - ".github/workflows/observability-validate.yaml"
@@ -17,6 +18,7 @@ on:
       - "observability/agent-loki-queries.json"
       - "observability/agent-tempo-searches.json"
       - "ops/smoke/observability.sh"
+      - "ops/smoke/multisignal-correlation.sh"
       - "ops/smoke/full-reference-environment.sh"
       - "docs/20-multi-signal-observability.md"
       - ".github/workflows/observability-validate.yaml"
@@ -48,6 +50,7 @@ jobs:
       - name: Validate observability smoke entrypoints
         run: |
           bash -n ops/smoke/observability.sh
+          bash -n ops/smoke/multisignal-correlation.sh
           bash -n ops/smoke/full-reference-environment.sh
 
       - name: Guard observability routes
