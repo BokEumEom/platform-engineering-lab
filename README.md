@@ -19,7 +19,7 @@ Observe
 → Re-evaluate / learn
 ```
 
-The current repository implements the runtime/evidence side of this loop and the first controlled GitOps remediation benchmark. Terraform ownership and policy-gated approved execution are the next reference-environment layer.
+The current repository has a verified GitOps remediation benchmark, a Terraform-owned capacity layer, deterministic change-risk policy and approval contracts, and a second cross-owner HPA/ResourceQuota benchmark that is ready for local live validation. Multi-signal Loki/Tempo evidence is now wired as read-only enrichment and must pass live smoke before it is promoted into blocking Ops decisions.
 
 ## Current reference topology
 
@@ -50,6 +50,7 @@ Envoy Gateway + Gateway API
 MetalLB
 cert-manager / TLS
 Argo CD / GitOps
+Terraform / Kubernetes provider
 GitHub Actions + GHCR
 Prometheus / Grafana / Alertmanager
 OpenTelemetry Collector / Tempo
@@ -73,7 +74,9 @@ state:
         ↓
 findings + evidence refs + release guidance
         ↓
-remediation
+proposal / policy / approval
+        ↓
+GitOps or Terraform execution
         ↓
 fresh evidence
         ↓
@@ -82,18 +85,20 @@ ops-compare
 verified recovery | persistent issue | regression
 ```
 
+Loki and Tempo are separate read-only enrichment sources. Their adapters preserve source provenance and bounded query windows, but they do not yet change blocking `ops-review` decisions. The next promotion step is an evaluated metric → log → trace correlation contract rather than an implicit change to incident thresholds.
+
 Dependency analysis is topology-generic. The Agent discovers application services from Kubernetes Deployment evidence (`OTEL_SERVICE_NAME`) and matches Prometheus observations by `component` and `signal`; new services require telemetry/query coverage rather than hardcoded review branches.
 
 ## Live reference-environment smoke test
 
-Before any controlled failure benchmark, validate the actual local cluster and evidence path:
+Before any controlled failure benchmark, validate the actual local cluster and all evidence paths:
 
 ```bash
 cd ~/platform-engineering-lab
-bash ops/smoke/reference-environment.sh
+bash ops/smoke/full-reference-environment.sh
 ```
 
-The smoke test is read-only with respect to infrastructure desired state. It verifies:
+The full smoke test is read-only with respect to infrastructure desired state. It verifies:
 
 ```text
 Argo applications Synced/Healthy
@@ -105,9 +110,20 @@ Argo applications Synced/Healthy
 → error-ratio and P95 recording rules for all six services
 → Harness Kubernetes + Prometheus evidence
 → complete baseline Ops review
+→ Loki/Tempo/Alertmanager Gateway routes
+→ fresh demo-app logs in Loki
+→ fresh distributed traces in Tempo
+→ Alertmanager API + Prometheus firing-alert visibility
+→ Harness Loki + Tempo read-only enrichment evidence
 ```
 
-Runtime evidence is written under `.ops-smoke/<run-id>/` and ignored by Git.
+Runtime evidence is written under `.ops-smoke/<run-id>-full/` and ignored by Git.
+
+The narrower metrics/runtime smoke remains available as:
+
+```bash
+bash ops/smoke/reference-environment.sh
+```
 
 ## First live Ops benchmark
 
@@ -131,7 +147,7 @@ The benchmark performs:
 ```text
 healthy baseline
 → GitOps fault commit
-→ Argo reconciliation
+→ exact Argo revision + live fault verification
 → real HTTPS Gateway traffic
 → Kubernetes + Prometheus evidence
 → Ops review
@@ -143,7 +159,41 @@ healthy baseline
 
 The benchmark requires the initial `orders-service` fault profile to be zero. If execution terminates while its injected fault may still be active, it performs a best-effort GitOps safety recovery and preserves the original failure status.
 
+This benchmark has completed live local runs with `verified_recovery=true`; the reconciliation race found during the first run is now guarded by exact Argo revision and live workload checks.
+
 Runtime evidence is written under `.ops-benchmark/<run-id>/` and is not committed to Git.
+
+## Second policy-gated capacity benchmark
+
+The HPA/ResourceQuota scenario is the first cross-owner change path:
+
+```text
+HPA scale-out pressure
+→ Terraform-owned ResourceQuota rejection
+→ capacity-review correlation
+→ Terraform + GitOps proposal
+→ deterministic risk classification
+→ explicit proposal-digest approval
+→ one-shot ChangeControl revalidation
+→ Terraform + GitOps execution
+→ post-check
+→ temporary HPA rollback
+```
+
+Dry run:
+
+```bash
+bash ops/benchmarks/hpa-quota/run.sh
+```
+
+Intentional execution is only performed after the local dry run confirms that the constrained quota is safe for the current cluster baseline:
+
+```bash
+OPS_CAPACITY_ACK=platform-engineering-lab \
+  bash ops/benchmarks/hpa-quota/run.sh --execute
+```
+
+The implementation and CI contracts are present; the full local mutation loop remains a live-validation milestone rather than a claimed completed benchmark.
 
 ## Shared Gateway access
 
@@ -153,6 +203,9 @@ Application and operational UIs/APIs use the shared Gateway instead of ad-hoc Ku
 https://web.lab.local:8443
 https://grafana.lab.local:8443
 https://prometheus.lab.local:8443
+https://loki.lab.local:8443
+https://tempo.lab.local:8443
+https://alertmanager.lab.local:8443
 https://argocd.lab.local:8443
 ```
 
@@ -166,16 +219,15 @@ Local WSL/kind routing uses Docker TCP proxies while preserving the real platfor
   → HTTPS HTTPRoute
 ```
 
-The Infrastructure Engineering Harness reads the Prometheus API without `kubectl port-forward`:
+Read-only Agent API access uses the corresponding HTTP routes without `kubectl port-forward`:
 
 ```text
 127.0.0.1:8080
-Host: prometheus.lab.local
+Host: prometheus.lab.local | loki.lab.local | tempo.lab.local | alertmanager.lab.local
   → Docker TCP proxy
   → MetalLB :80
   → Envoy Gateway
-  → HTTPRoute/prometheus-agent
-  → Prometheus :9090
+  → bounded read-only backend API
 ```
 
 Gateway listeners only accept Routes from namespaces labeled `gateway-access: "true"`. `demo-app`, `monitoring` and `platform-system` are managed accordingly. This is enforced in CI because a missing namespace label can make a syntactically valid HTTPRoute invisible to Envoy and produce a 404.
@@ -186,6 +238,9 @@ For Windows browser access add:
 127.0.0.1 web.lab.local
 127.0.0.1 grafana.lab.local
 127.0.0.1 prometheus.lab.local
+127.0.0.1 loki.lab.local
+127.0.0.1 tempo.lab.local
+127.0.0.1 alertmanager.lab.local
 127.0.0.1 argocd.lab.local
 ```
 
@@ -227,7 +282,7 @@ Current ownership direction:
 
 ```text
 Terraform
-  → bootstrap / foundation / quota / future cloud resources
+  → ResourceQuota / foundation / future cloud resources
 
 Argo CD
   → application workloads
@@ -250,14 +305,15 @@ Terraform and Argo CD must not concurrently own the same Kubernetes object.
 platform-engineering-lab/
 ├── apps/api/                       # six-role FastAPI application
 ├── gitops/apps/demo-app/           # application desired state
-├── gitops/platform/                # shared platform resources
+├── gitops/platform/                # shared platform resources and API routes
+├── terraform/reference-environment/# Terraform-owned quota/foundation layer
 ├── argocd/                         # Argo Applications
-├── observability/                  # metrics/logs/traces/SLO/dashboards
-├── ops/smoke/                      # live reference-environment preflight
+├── observability/                  # metrics/logs/traces/SLO/query profiles/dashboards
+├── ops/smoke/                      # runtime + multi-signal live preflight
 ├── ops/benchmarks/                 # live Ops Agent benchmarks
 ├── platform/                       # platform component values
 ├── docs/                           # executable architecture/runbooks
-└── .github/workflows/              # CI + manifest validation
+└── .github/workflows/              # CI + manifest/evidence contract validation
 ```
 
 ## Important documentation
@@ -273,6 +329,7 @@ Start with the operational documents when evaluating the Agent:
 - [16 — Reference Environment Roadmap](docs/16-reference-environment-roadmap.md)
 - [17 — Gateway Route Namespace Access Invariant](docs/17-gateway-access-invariant.md)
 - [18 — Reference Environment Smoke Test](docs/18-reference-environment-smoke-test.md)
+- [20 — Multi-signal Observability](docs/20-multi-signal-observability.md)
 
 Earlier documents (`00`–`09`) preserve the build-up of Kubernetes, Gateway API, observability, tracing and TLS foundations.
 
@@ -286,15 +343,17 @@ Already established in repository/runtime history:
 - Prometheus ServiceMonitor / Envoy PodMonitor;
 - Grafana dashboards as code;
 - SLO/error-budget recording rules;
-- OpenTelemetry + Tempo distributed tracing;
+- OpenTelemetry + Tempo distributed tracing desired state;
 - Loki + Alloy log/event pipeline desired state;
 - read-only Kubernetes and Gateway-routed Prometheus Agent adapters;
+- read-only Loki and Tempo enrichment adapters with deterministic unit tests;
 - evidence-backed `ops-review` and `ops-compare`;
-- controlled fault injection and recovery benchmark;
-- reference-environment smoke verification;
+- controlled fault injection and verified GitOps recovery benchmark;
+- Terraform ResourceQuota ownership and policy-gated HPA/Quota benchmark implementation;
+- reference-environment and multi-signal smoke contracts;
 - regression fixtures for Agent decision behavior.
 
-A repository manifest is **not** treated as proof that the corresponding runtime behavior is healthy. Runtime claims remain pending until fresh evidence verifies them.
+A repository manifest or passing static CI is **not** treated as proof that the corresponding runtime behavior is healthy. New Loki/Tempo/Alertmanager Gateway paths and enrichment adapters remain runtime-pending until the full local smoke produces fresh evidence.
 
 ## Evaluation direction
 
@@ -316,7 +375,7 @@ public exposure change
 failed remediation + rollback
 ```
 
-Evaluation should measure detection, root-cause localization, evidence completeness, risk classification, unsafe-action avoidance, post-check quality, rollback correctness and false-positive/false-negative behavior.
+Evaluation should measure detection, root-cause localization, evidence completeness, risk classification, unsafe-action avoidance, post-check quality, rollback correctness and false-positive/false-negative behavior. Multi-signal evaluation must additionally measure whether log/trace enrichment improves localization without increasing false positives or creating stale-evidence conclusions.
 
 ## Production-readiness boundary
 
@@ -324,12 +383,12 @@ This project is a **production-style reference environment**, not a claim that a
 
 Still to be closed before calling the Agent a production autonomous operator:
 
-- policy engine for mutation risk/blast radius/privilege/cost;
-- explicit human approval workflow;
-- Terraform change adapter and ownership model;
-- independently verified rollback executor;
-- durable/HA production telemetry patterns;
-- real notification/on-call integration;
+- full live verification of the policy-gated Terraform + GitOps change loop;
+- deterministic metric → log → trace correlation promoted through evaluation;
+- authentication/authorization on observability Agent APIs;
+- durable/HA production telemetry and state patterns;
+- real notification/on-call integration instead of the local null Alertmanager receiver;
+- synthetic external monitoring;
 - broader live failure/evaluation corpus;
 - measurable external-user reproduction evidence.
 
