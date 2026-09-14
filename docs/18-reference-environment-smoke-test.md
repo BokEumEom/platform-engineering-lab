@@ -54,6 +54,8 @@ Host: prometheus.lab.local
 
 The Agent therefore does not require `kubectl port-forward` for Prometheus evidence.
 
+Gateway API runtime status is evaluated structurally rather than by concatenating JSONPath strings. A Route may expose more than one parent status entry, so output such as two `Accepted=True` conditions is valid when every observed parent also has `ResolvedRefs=True`. The smoke test reports ratios such as `Accepted=2/2 ResolvedRefs=2/2 healthyParents=2/2` and fails only when an observed parent is not fully accepted/resolved.
+
 ## Evidence output
 
 Each run writes disposable evidence to:
