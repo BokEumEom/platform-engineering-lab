@@ -10,8 +10,8 @@ on:
       - "argocd/**"
       - "ops/**"
       - "scripts/**"
-      - "docs/13-ops-agent-runbook.md"
-      - "docs/14-operational-observability.md"
+      - "README.md"
+      - "docs/**"
       - ".github/workflows/platform-validate.yaml"
   pull_request:
     paths:
@@ -21,6 +21,8 @@ on:
       - "argocd/**"
       - "ops/**"
       - "scripts/**"
+      - "README.md"
+      - "docs/**"
       - ".github/workflows/platform-validate.yaml"
   workflow_dispatch:
 
@@ -79,6 +81,9 @@ jobs:
       - name: Guard Gateway route namespace access
         run: python scripts/validate_gateway_route_namespaces.py
 
+      - name: Guard Agent service evidence coverage
+        run: python scripts/validate_agent_service_coverage.py
+
       - name: Guard zero-error SLI materialization
         shell: bash
         run: |
@@ -117,8 +122,10 @@ jobs:
       - name: Render observability GitOps
         run: kubectl kustomize observability >/tmp/observability.yaml
 
-      - name: Validate Ops benchmark shell
-        run: bash -n ops/benchmarks/orders-fault/run.sh
+      - name: Validate Ops shell entrypoints
+        run: |
+          bash -n ops/smoke/reference-environment.sh
+          bash -n ops/benchmarks/orders-fault/run.sh
 
       - name: Guard healthy default fault profile
         shell: bash
