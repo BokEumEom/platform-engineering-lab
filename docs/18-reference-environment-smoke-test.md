@@ -30,6 +30,53 @@ Kubernetes context
 
 No Kubernetes workload, Git desired state, Argo application or Terraform resource is mutated by this test. Generating application requests only produces runtime traffic and telemetry.
 
+## Verified live run — 2026-09-14
+
+The local Docker Desktop / Kubernetes reference environment completed the smoke test successfully with fresh runtime evidence.
+
+Observed result:
+
+```text
+Argo applications:
+  platform                 Synced / Healthy
+  demo-app                 Synced / Healthy
+  observability-config     Synced / Healthy
+
+Gateway endpoints:
+  web.lab.local            HTTP 200
+  grafana.lab.local        HTTP 302
+  prometheus.lab.local     HTTP 302
+  argocd.lab.local         HTTP 200
+
+Application traffic:
+  30/30 successful HTTPS requests through MetalLB + Envoy
+
+Prometheus service coverage:
+  raw metrics              6/6 services
+  error-ratio recording    6/6 services
+  P95 recording            6/6 services
+
+Harness baseline:
+  state                    healthy
+  release_guidance         continue
+  missing_required         []
+```
+
+The six observed services were:
+
+```text
+platform-api
+catalog-service
+orders-service
+inventory-service
+payments-service
+recommendations-service
+```
+
+The cold/warm telemetry path required multiple Prometheus scrape/evaluation cycles before all recording-rule series appeared: raw metrics were immediately complete, while error-ratio/P95 coverage progressed from `0/6` to `4/6` and finally `6/6`. This is expected evidence propagation behavior, not an application failure, and justifies the bounded polling used by the smoke test and live benchmarks.
+
+A retained Kubernetes Warning-event finding remained as non-blocking `P2`; the Agent still classified the live baseline as `healthy` with `release_guidance=continue` and no required evidence gaps.
+
 ## Gateway access model
 
 The local WSL environment cannot directly route to kind MetalLB addresses, so Docker TCP proxies preserve the real Gateway path:
