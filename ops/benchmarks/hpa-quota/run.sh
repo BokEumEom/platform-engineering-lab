@@ -125,7 +125,6 @@ terraform_apply() {
 
 start_load() {
   log "starting concurrent Gateway load: workers=${LOAD_CONCURRENCY}"
-  : >"${RUN_DIR}/load.stop"
   rm -f "${RUN_DIR}/load.stop"
   for worker in $(seq 1 "${LOAD_CONCURRENCY}"); do
     (
@@ -211,13 +210,28 @@ print(hashlib.sha256(canonical.encode()).hexdigest())
 PY
 }
 
+require_approval() {
+  local digest="$1"
+  local approved="${OPS_CAPACITY_APPROVAL:-}"
+  if [[ -n "${approved}" ]]; then
+    [[ "${approved}" == "${digest}" ]] || fail "OPS_CAPACITY_APPROVAL must equal the exact proposal digest ${digest}"
+    log "explicit approval matched the exact proposal digest"
+    return 0
+  fi
+  [[ -t 0 ]] || fail "interactive approval required; rerun with OPS_CAPACITY_APPROVAL=${digest}"
+  local answer
+  printf '\nType APPROVE %s to authorize this exact proposal: ' "${digest:0:12}"
+  read -r answer
+  [[ "${answer}" == "APPROVE ${digest:0:12}" ]] || fail "change not approved"
+  log "interactive approval accepted for proposal ${digest:0:12}"
+}
+
 capture_resource_snapshot() {
   kubectl get hpa web -n demo-app -o json >"${RUN_DIR}/hpa-before-approval.json"
   kubectl get resourcequota demo-app-capacity -n demo-app -o json >"${RUN_DIR}/quota-before-approval.json"
 }
 
 authorize_change() {
-  local digest="$1"
   capture_resource_snapshot
   PYTHONPATH="${HARNESS_DIR}" "${PYTHON_BIN}" - \
     "${RUN_DIR}/capacity-review.json" \
@@ -272,18 +286,6 @@ Path(sys.argv[5]).write_text(json.dumps({
 }, indent=2)+"\n")
 print(f"approval={grant.approval_id} apply_check={check.code}")
 PY
-
-  local approved="${OPS_CAPACITY_APPROVAL:-}"
-  if [[ -n "${approved}" ]]; then
-    [[ "${approved}" == "${digest}" ]] || fail "OPS_CAPACITY_APPROVAL must equal the exact proposal digest ${digest}"
-    log "approval supplied by exact proposal digest"
-    return 0
-  fi
-  [[ -t 0 ]] || fail "interactive approval required; rerun with OPS_CAPACITY_APPROVAL=${digest}"
-  local answer
-  printf '\nType APPROVE %s to execute the policy-approved change: ' "${digest:0:12}"
-  read -r answer
-  [[ "${answer}" == "APPROVE ${digest:0:12}" ]] || fail "change not approved"
 }
 
 collect_ops_review() {
@@ -370,7 +372,7 @@ Scenario #2 will:
   4. ask the Agent for a cross-owner remediation proposal
   5. classify risk with change-policy
   6. require explicit proposal-digest approval
-  7. revalidate the one-shot ChangeControl grant
+  7. create and revalidate the one-shot ChangeControl grant only after approval
   8. restore Terraform CPU headroom and raise GitOps HPA max ${BASELINE_HPA_MAX}->${TARGET_HPA_MAX}
   9. run live post-checks
  10. stop load and rollback the temporary HPA change to ${BASELINE_HPA_MAX}
@@ -395,8 +397,8 @@ EOF
   ops_healthy "${RUN_DIR}/baseline-review.json" || fail "baseline Ops review must be healthy before capacity injection"
 
   log "injecting constrained ResourceQuota through Terraform"
-  terraform_apply constrained
   TF_CONSTRAINED=1
+  terraform_apply constrained
   wait_for_quota "900m"
   printf 'quota constrained: hard=%s used=%s\n' "$(quota_cpu_hard)" "$(quota_cpu_used)"
 
@@ -429,7 +431,8 @@ EOF
   digest="$(proposal_digest)"
   log "proposal digest: ${digest}"
 
-  authorize_change "${digest}"
+  require_approval "${digest}"
+  authorize_change
 
   log "executing approved Terraform capacity remediation"
   terraform_apply baseline
