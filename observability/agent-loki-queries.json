@@ -1,0 +1,20 @@
+{
+  "demo_app_recent_logs": {
+    "component": "demo-app",
+    "signal": "recent_logs",
+    "query": "{namespace=\"demo-app\"}",
+    "limit": 50
+  },
+  "demo_app_error_logs": {
+    "component": "demo-app",
+    "signal": "error_logs",
+    "query": "{namespace=\"demo-app\"} | json | level=\"error\"",
+    "limit": 50
+  },
+  "kubernetes_events": {
+    "component": "kubernetes",
+    "signal": "cluster_events",
+    "query": "{job=\"integrations/kubernetes/eventhandler\"}",
+    "limit": 50
+  }
+}
