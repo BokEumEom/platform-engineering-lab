@@ -1,0 +1,13 @@
+{
+  "recent_traces": {
+    "component": "platform",
+    "signal": "recent_traces",
+    "limit": 20
+  },
+  "platform_api_traces": {
+    "component": "platform-api",
+    "signal": "recent_traces",
+    "tags": "service.name=platform-api",
+    "limit": 20
+  }
+}
