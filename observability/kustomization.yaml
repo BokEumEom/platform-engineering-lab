@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - demo-app-servicemonitor.yaml
+  - storage-probe-servicemonitor.yaml
   - demo-app-dashboard.yaml
   - envoy-proxy-podmonitor.yaml
   - envoy-gateway-dashboard.yaml
