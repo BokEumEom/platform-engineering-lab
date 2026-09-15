@@ -154,6 +154,36 @@
     "signal": "hpa_saturation",
     "query": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"demo-app\"} / clamp_min(kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"demo-app\"}, 1))"
   },
+  "storage_pvc_bound": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_bound",
+    "query": "max(kube_persistentvolumeclaim_status_phase{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\",phase=\"Bound\"} == 1)"
+  },
+  "storage_pvc_requested_bytes": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_requested_bytes",
+    "query": "max(kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"})"
+  },
+  "storage_pvc_used_bytes": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_used_bytes",
+    "query": "max(kubelet_volume_stats_used_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"})"
+  },
+  "storage_pvc_available_bytes": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_available_bytes",
+    "query": "max(kubelet_volume_stats_available_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"})"
+  },
+  "storage_pvc_usage_ratio": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_usage_ratio",
+    "query": "max(kubelet_volume_stats_used_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"} / clamp_min(kubelet_volume_stats_capacity_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"}, 1))"
+  },
+  "storage_pvc_inode_usage_ratio": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_inode_usage_ratio",
+    "query": "max(kubelet_volume_stats_inodes_used{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"} / clamp_min(kubelet_volume_stats_inodes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"}, 1))"
+  },
   "pending_pods": {
     "component": "kubernetes",
     "signal": "pending_pods",
