@@ -29,13 +29,15 @@ spec:
               /
               clamp_min(kubelet_volume_stats_capacity_bytes, 1)
             ) > 0.80
+            or
+            storage_probe_usage_ratio > 0.80
           for: 15m
           labels:
             severity: warning
             service: kubernetes-storage
           annotations:
             summary: "PersistentVolumeClaim usage is above 80%"
-            description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has remained above 80% filesystem usage for more than 15 minutes."
+            description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has remained above 80% usage for more than 15 minutes. Standard kubelet/CSI volume stats are preferred; storage_probe_usage_ratio is the deterministic local-lab fallback."
 
         - alert: KubernetesPersistentVolumeClaimUsageCritical
           expr: |
@@ -44,13 +46,15 @@ spec:
               /
               clamp_min(kubelet_volume_stats_capacity_bytes, 1)
             ) > 0.90
+            or
+            storage_probe_usage_ratio > 0.90
           for: 5m
           labels:
             severity: critical
             service: kubernetes-storage
           annotations:
             summary: "PersistentVolumeClaim usage is above 90%"
-            description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has remained above 90% filesystem usage for more than 5 minutes."
+            description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has remained above 90% usage for more than 5 minutes. Standard kubelet/CSI volume stats are preferred; storage_probe_usage_ratio is the deterministic local-lab fallback."
 
         - alert: KubernetesPersistentVolumeClaimInodesHigh
           expr: |
@@ -65,4 +69,4 @@ spec:
             service: kubernetes-storage
           annotations:
             summary: "PersistentVolumeClaim inode usage is above 90%"
-            description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has remained above 90% inode usage for more than 10 minutes."
+            description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has remained above 90% inode usage for more than 10 minutes. This alert requires CSI/kubelet inode statistics and has no synthetic fallback."
