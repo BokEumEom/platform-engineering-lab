@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-probe
+  namespace: demo-app
+  labels:
+    app: storage-probe
+    app.kubernetes.io/name: storage-probe
+    app.kubernetes.io/part-of: platform-demo
+    app.kubernetes.io/component: storage
+spec:
+  clusterIP: None
+  selector:
+    app: storage-probe
+  ports:
+    - name: noop
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: storage-probe
+  namespace: demo-app
+  labels:
+    app: storage-probe
+    app.kubernetes.io/name: storage-probe
+    app.kubernetes.io/part-of: platform-demo
+    app.kubernetes.io/component: storage
+spec:
+  serviceName: storage-probe
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storage-probe
+  template:
+    metadata:
+      labels:
+        app: storage-probe
+        app.kubernetes.io/name: storage-probe
+        app.kubernetes.io/part-of: platform-demo
+        app.kubernetes.io/component: storage
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: storage-probe
+          image: ghcr.io/bokeumeom/platform-api:0655417e0143c853d75672b9d03e8421ca06e6db
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+              import os
+              import time
+
+              path = "/data/fill.bin"
+              while True:
+                  target_mib = max(0, int(os.getenv("STORAGE_FILL_MIB", "0")))
+                  with open(path, "ab") as handle:
+                      handle.truncate(target_mib * 1024 * 1024)
+                      handle.flush()
+                  os.utime(path, None)
+                  time.sleep(30)
+          env:
+            - name: STORAGE_FILL_MIB
+              value: "0"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: storage-probe
+          app.kubernetes.io/name: storage-probe
+          app.kubernetes.io/part-of: platform-demo
+          app.kubernetes.io/component: storage
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
