@@ -9,7 +9,10 @@ STATEFULSET="${STORAGE_STATEFULSET:-storage-probe}"
 PVC_PATTERN="${STORAGE_PVC_PATTERN:-data-storage-probe-.*}"
 ARGO_APP="${STORAGE_ARGO_APP:-demo-app}"
 ARGO_NAMESPACE="${ARGO_NAMESPACE:-argocd}"
-RECONCILE_MAX_POLLS="${STORAGE_RECONCILE_MAX_POLLS:-24}"
+# Argo CD defaults to a 120s reconciliation interval plus up to 60s jitter.
+# Keep the smoke window comfortably above that so a healthy periodic refresh
+# does not become a false negative.
+RECONCILE_MAX_POLLS="${STORAGE_RECONCILE_MAX_POLLS:-60}"
 RECONCILE_POLL_SECONDS="${STORAGE_RECONCILE_POLL_SECONDS:-5}"
 METRIC_MAX_POLLS="${STORAGE_METRIC_MAX_POLLS:-12}"
 METRIC_POLL_SECONDS="${STORAGE_METRIC_POLL_SECONDS:-5}"
@@ -48,11 +51,37 @@ print(r[0].get("value", [None, "0"])[1] if r else "0")
 '
 }
 
+print_argo_diagnostics() {
+  local configured_timeout configured_jitter
+  configured_timeout="$(kubectl get configmap argocd-cm -n "${ARGO_NAMESPACE}" -o jsonpath='{.data.timeout\.reconciliation}' 2>/dev/null || true)"
+  configured_jitter="$(kubectl get configmap argocd-cm -n "${ARGO_NAMESPACE}" -o jsonpath='{.data.timeout\.reconciliation\.jitter}' 2>/dev/null || true)"
+
+  echo "  Argo diagnostics:" >&2
+  printf '    timeout.reconciliation=%s\n' "${configured_timeout:-<default>}" >&2
+  printf '    timeout.reconciliation.jitter=%s\n' "${configured_jitter:-<default>}" >&2
+  kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" \
+    -o jsonpath='    revision={.status.sync.revision}{" sync="}{.status.sync.status}{" health="}{.status.health.status}{" reconciledAt="}{.status.reconciledAt}{"\n"}' \
+    >&2 2>/dev/null || true
+  kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" \
+    -o jsonpath='{range .status.conditions[*]}    condition {.type}: {.message}{"\n"}{end}' \
+    >&2 2>/dev/null || true
+  kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" \
+    -o jsonpath='    operationPhase={.status.operationState.phase}{" message="}{.status.operationState.message}{"\n"}' \
+    >&2 2>/dev/null || true
+}
+
 wait_for_storage_reconciliation() {
-  local expected revision sync health exists attempt
-  expected="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+  local expected local_head origin_main revision sync health exists attempt
+  local_head="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+  origin_main="$(git -C "${ROOT_DIR}" rev-parse refs/remotes/origin/main 2>/dev/null || true)"
+  expected="${origin_main:-${local_head}}"
+
   log "Argo CD storage reconciliation"
-  printf '  expected_revision=%s\n' "${expected}"
+  printf '  local_head=%s\n' "${local_head}"
+  printf '  expected_remote_revision=%s\n' "${expected}"
+  if [[ "${local_head}" != "${expected}" ]]; then
+    fail "local HEAD does not match origin/main; run git pull before the storage smoke"
+  fi
 
   for attempt in $(seq 1 "${RECONCILE_MAX_POLLS}"); do
     revision="$(kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.sync.revision}' 2>/dev/null || true)"
@@ -70,7 +99,8 @@ wait_for_storage_reconciliation() {
     [[ "${attempt}" == "${RECONCILE_MAX_POLLS}" ]] || sleep "${RECONCILE_POLL_SECONDS}"
   done
 
-  fail "Argo ${ARGO_NAMESPACE}/${ARGO_APP} did not reconcile ${expected} with StatefulSet ${NAMESPACE}/${STATEFULSET}; inspect kubectl -n ${ARGO_NAMESPACE} get application ${ARGO_APP} -o yaml"
+  print_argo_diagnostics
+  fail "Argo ${ARGO_NAMESPACE}/${ARGO_APP} did not reconcile ${expected} with StatefulSet ${NAMESPACE}/${STATEFULSET} within the bounded reconciliation window"
 }
 
 wait_for_probe_metrics() {
