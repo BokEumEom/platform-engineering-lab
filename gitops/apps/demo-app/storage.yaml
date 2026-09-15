@@ -13,9 +13,9 @@ spec:
   selector:
     app: storage-probe
   ports:
-    - name: noop
+    - name: metrics
       port: 8080
-      targetPort: 8080
+      targetPort: metrics
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -58,19 +58,100 @@ spec:
             - -c
             - |
               import os
+              import threading
               import time
+              from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-              path = "/data/fill.bin"
-              while True:
-                  target_mib = max(0, int(os.getenv("STORAGE_FILL_MIB", "0")))
-                  with open(path, "ab") as handle:
-                      handle.truncate(target_mib * 1024 * 1024)
-                      handle.flush()
-                  os.utime(path, None)
-                  time.sleep(30)
+              data_dir = "/data"
+              path = f"{data_dir}/fill.bin"
+              requested_capacity = int(os.getenv("STORAGE_REQUESTED_CAPACITY_BYTES", str(1024 ** 3)))
+              namespace = os.getenv("POD_NAMESPACE", "demo-app")
+              pvc_name = os.getenv("PVC_NAME", "data-storage-probe-0")
+
+              def fill_loop():
+                  while True:
+                      target_mib = max(0, int(os.getenv("STORAGE_FILL_MIB", "0")))
+                      target_bytes = min(target_mib * 1024 * 1024, requested_capacity)
+                      with open(path, "ab") as handle:
+                          handle.truncate(target_bytes)
+                          handle.flush()
+                      os.utime(path, None)
+                      time.sleep(5)
+
+              def metrics_text():
+                  fill_bytes = os.path.getsize(path) if os.path.exists(path) else 0
+                  stat = os.statvfs(data_dir)
+                  fs_capacity = stat.f_frsize * stat.f_blocks
+                  fs_available = stat.f_frsize * stat.f_bavail
+                  fs_used = max(0, fs_capacity - (stat.f_frsize * stat.f_bfree))
+                  usage_ratio = fill_bytes / requested_capacity if requested_capacity else 0.0
+                  labels = f'namespace="{namespace}",persistentvolumeclaim="{pvc_name}"'
+                  return "\n".join([
+                      "# HELP storage_probe_fill_bytes Bytes intentionally allocated by the storage probe.",
+                      "# TYPE storage_probe_fill_bytes gauge",
+                      f"storage_probe_fill_bytes{{{labels}}} {fill_bytes}",
+                      "# HELP storage_probe_requested_capacity_bytes Requested PVC capacity used as the deterministic lab denominator.",
+                      "# TYPE storage_probe_requested_capacity_bytes gauge",
+                      f"storage_probe_requested_capacity_bytes{{{labels}}} {requested_capacity}",
+                      "# HELP storage_probe_usage_ratio Probe fill bytes divided by requested PVC capacity.",
+                      "# TYPE storage_probe_usage_ratio gauge",
+                      f"storage_probe_usage_ratio{{{labels}}} {usage_ratio}",
+                      "# HELP storage_probe_filesystem_capacity_bytes Underlying mounted filesystem capacity from statvfs.",
+                      "# TYPE storage_probe_filesystem_capacity_bytes gauge",
+                      f"storage_probe_filesystem_capacity_bytes{{{labels}}} {fs_capacity}",
+                      "# HELP storage_probe_filesystem_used_bytes Underlying mounted filesystem used bytes from statvfs.",
+                      "# TYPE storage_probe_filesystem_used_bytes gauge",
+                      f"storage_probe_filesystem_used_bytes{{{labels}}} {fs_used}",
+                      "# HELP storage_probe_filesystem_available_bytes Underlying mounted filesystem available bytes from statvfs.",
+                      "# TYPE storage_probe_filesystem_available_bytes gauge",
+                      f"storage_probe_filesystem_available_bytes{{{labels}}} {fs_available}",
+                      "",
+                  ])
+
+              class Handler(BaseHTTPRequestHandler):
+                  def do_GET(self):
+                      if self.path != "/metrics":
+                          self.send_response(404)
+                          self.end_headers()
+                          return
+                      payload = metrics_text().encode()
+                      self.send_response(200)
+                      self.send_header("Content-Type", "text/plain; version=0.0.4")
+                      self.send_header("Content-Length", str(len(payload)))
+                      self.end_headers()
+                      self.wfile.write(payload)
+
+                  def log_message(self, *_args):
+                      return
+
+              threading.Thread(target=fill_loop, daemon=True).start()
+              ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
           env:
             - name: STORAGE_FILL_MIB
               value: "0"
+            - name: STORAGE_REQUESTED_CAPACITY_BYTES
+              value: "1073741824"
+            - name: PVC_NAME
+              value: "data-storage-probe-0"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: metrics
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
