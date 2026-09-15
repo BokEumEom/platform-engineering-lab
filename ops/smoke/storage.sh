@@ -8,6 +8,7 @@ NAMESPACE="${STORAGE_NAMESPACE:-demo-app}"
 STATEFULSET="${STORAGE_STATEFULSET:-storage-probe}"
 PVC_PATTERN="${STORAGE_PVC_PATTERN:-data-storage-probe-.*}"
 ARGO_APP="${STORAGE_ARGO_APP:-demo-app}"
+OBSERVABILITY_ARGO_APP="${STORAGE_OBSERVABILITY_ARGO_APP:-observability-config}"
 ARGO_NAMESPACE="${ARGO_NAMESPACE:-argocd}"
 # Argo CD defaults to a 120s reconciliation interval plus up to 60s jitter.
 # Keep the smoke window comfortably above that so a healthy periodic refresh
@@ -51,6 +52,25 @@ print(r[0].get("value", [None, "0"])[1] if r else "0")
 '
 }
 
+revision_contains() {
+  local required="$1" observed="$2"
+  [[ -n "${required}" && -n "${observed}" ]] || return 1
+  git -C "${ROOT_DIR}" merge-base --is-ancestor "${required}" "${observed}" >/dev/null 2>&1
+}
+
+print_application_diagnostics() {
+  local app="$1"
+  kubectl get application "${app}" -n "${ARGO_NAMESPACE}" \
+    -o jsonpath='    app={.metadata.name}{" revision="}{.status.sync.revision}{" sync="}{.status.sync.status}{" health="}{.status.health.status}{" reconciledAt="}{.status.reconciledAt}{"\n"}' \
+    >&2 2>/dev/null || true
+  kubectl get application "${app}" -n "${ARGO_NAMESPACE}" \
+    -o jsonpath='{range .status.conditions[*]}    condition {.type}: {.message}{"\n"}{end}' \
+    >&2 2>/dev/null || true
+  kubectl get application "${app}" -n "${ARGO_NAMESPACE}" \
+    -o jsonpath='    operationPhase={.status.operationState.phase}{" message="}{.status.operationState.message}{"\n"}' \
+    >&2 2>/dev/null || true
+}
+
 print_argo_diagnostics() {
   local configured_timeout configured_jitter
   configured_timeout="$(kubectl get configmap argocd-cm -n "${ARGO_NAMESPACE}" -o jsonpath='{.data.timeout\.reconciliation}' 2>/dev/null || true)"
@@ -59,40 +79,52 @@ print_argo_diagnostics() {
   echo "  Argo diagnostics:" >&2
   printf '    timeout.reconciliation=%s\n' "${configured_timeout:-<default>}" >&2
   printf '    timeout.reconciliation.jitter=%s\n' "${configured_jitter:-<default>}" >&2
-  kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" \
-    -o jsonpath='    revision={.status.sync.revision}{" sync="}{.status.sync.status}{" health="}{.status.health.status}{" reconciledAt="}{.status.reconciledAt}{"\n"}' \
-    >&2 2>/dev/null || true
-  kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" \
-    -o jsonpath='{range .status.conditions[*]}    condition {.type}: {.message}{"\n"}{end}' \
-    >&2 2>/dev/null || true
-  kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" \
-    -o jsonpath='    operationPhase={.status.operationState.phase}{" message="}{.status.operationState.message}{"\n"}' \
-    >&2 2>/dev/null || true
+  print_application_diagnostics "${ARGO_APP}"
+  print_application_diagnostics "${OBSERVABILITY_ARGO_APP}"
 }
 
 wait_for_storage_reconciliation() {
-  local expected local_head origin_main revision sync health exists attempt
+  local local_head origin_main required_demo required_observability
+  local demo_revision demo_sync demo_health demo_ready
+  local obs_revision obs_sync obs_health obs_ready
+  local statefulset_exists monitor_exists attempt
+
   local_head="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
   origin_main="$(git -C "${ROOT_DIR}" rev-parse refs/remotes/origin/main 2>/dev/null || true)"
-  expected="${origin_main:-${local_head}}"
+  [[ -n "${origin_main}" ]] || origin_main="${local_head}"
+  required_demo="$(git -C "${ROOT_DIR}" log -1 --format=%H -- gitops/apps/demo-app/storage.yaml gitops/apps/demo-app/kustomization.yaml)"
+  required_observability="$(git -C "${ROOT_DIR}" log -1 --format=%H -- observability/storage-probe-servicemonitor.yaml observability/storage-alerts.yaml observability/storage-operations-dashboard.yaml observability/kustomization.yaml)"
 
   log "Argo CD storage reconciliation"
   printf '  local_head=%s\n' "${local_head}"
-  printf '  expected_remote_revision=%s\n' "${expected}"
-  if [[ "${local_head}" != "${expected}" ]]; then
+  printf '  origin_main=%s\n' "${origin_main}"
+  printf '  required_demo_revision=%s\n' "${required_demo}"
+  printf '  required_observability_revision=%s\n' "${required_observability}"
+  if [[ "${local_head}" != "${origin_main}" ]]; then
     fail "local HEAD does not match origin/main; run git pull before the storage smoke"
   fi
 
   for attempt in $(seq 1 "${RECONCILE_MAX_POLLS}"); do
-    revision="$(kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.sync.revision}' 2>/dev/null || true)"
-    sync="$(kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
-    health="$(kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
-    if kubectl get statefulset "${STATEFULSET}" -n "${NAMESPACE}" >/dev/null 2>&1; then exists="yes"; else exists="no"; fi
+    demo_revision="$(kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.sync.revision}' 2>/dev/null || true)"
+    demo_sync="$(kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+    demo_health="$(kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
+    obs_revision="$(kubectl get application "${OBSERVABILITY_ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.sync.revision}' 2>/dev/null || true)"
+    obs_sync="$(kubectl get application "${OBSERVABILITY_ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+    obs_health="$(kubectl get application "${OBSERVABILITY_ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
 
-    printf '  poll %s/%s: revision=%s sync=%s health=%s statefulset=%s\n' \
-      "${attempt}" "${RECONCILE_MAX_POLLS}" "${revision:-<none>}" "${sync:-<none>}" "${health:-<none>}" "${exists}"
+    if kubectl get statefulset "${STATEFULSET}" -n "${NAMESPACE}" >/dev/null 2>&1; then statefulset_exists="yes"; else statefulset_exists="no"; fi
+    if kubectl get servicemonitor storage-probe -n monitoring >/dev/null 2>&1; then monitor_exists="yes"; else monitor_exists="no"; fi
 
-    if [[ "${revision}" == "${expected}" && "${sync}" == "Synced" && "${health}" == "Healthy" && "${exists}" == "yes" ]]; then
+    if revision_contains "${required_demo}" "${demo_revision}"; then demo_ready="yes"; else demo_ready="no"; fi
+    if revision_contains "${required_observability}" "${obs_revision}"; then obs_ready="yes"; else obs_ready="no"; fi
+
+    printf '  poll %s/%s: demo revision=%s required=%s sync=%s health=%s statefulset=%s | observability revision=%s required=%s sync=%s health=%s servicemonitor=%s\n' \
+      "${attempt}" "${RECONCILE_MAX_POLLS}" \
+      "${demo_revision:-<none>}" "${demo_ready}" "${demo_sync:-<none>}" "${demo_health:-<none>}" "${statefulset_exists}" \
+      "${obs_revision:-<none>}" "${obs_ready}" "${obs_sync:-<none>}" "${obs_health:-<none>}" "${monitor_exists}"
+
+    if [[ "${demo_ready}" == "yes" && "${demo_sync}" == "Synced" && "${demo_health}" == "Healthy" && "${statefulset_exists}" == "yes" \
+       && "${obs_ready}" == "yes" && "${obs_sync}" == "Synced" && "${obs_health}" == "Healthy" && "${monitor_exists}" == "yes" ]]; then
       return 0
     fi
 
@@ -100,7 +132,7 @@ wait_for_storage_reconciliation() {
   done
 
   print_argo_diagnostics
-  fail "Argo ${ARGO_NAMESPACE}/${ARGO_APP} did not reconcile ${expected} with StatefulSet ${NAMESPACE}/${STATEFULSET} within the bounded reconciliation window"
+  fail "Argo applications did not reconcile the required storage workload and observability revisions within the bounded window"
 }
 
 wait_for_probe_metrics() {
