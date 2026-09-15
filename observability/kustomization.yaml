@@ -7,7 +7,9 @@ resources:
   - envoy-proxy-podmonitor.yaml
   - envoy-gateway-dashboard.yaml
   - platform-alerts.yaml
+  - storage-alerts.yaml
   - platform-slo-rules.yaml
   - platform-operations-dashboard.yaml
   - kubernetes-operations-dashboard.yaml
+  - storage-operations-dashboard.yaml
   - platform-logs-dashboard.yaml
