@@ -1,0 +1,68 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-storage-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: platform-engineering-lab
+spec:
+  groups:
+    - name: kubernetes.storage
+      rules:
+        - alert: KubernetesPersistentVolumeClaimPending
+          expr: |
+            max by (namespace, persistentvolumeclaim) (
+              kube_persistentvolumeclaim_status_phase{phase="Pending"} == 1
+            ) > 0
+          for: 10m
+          labels:
+            severity: warning
+            service: kubernetes-storage
+          annotations:
+            summary: "PersistentVolumeClaim is pending"
+            description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has remained Pending for more than 10 minutes."
+
+        - alert: KubernetesPersistentVolumeClaimUsageHigh
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes
+              /
+              clamp_min(kubelet_volume_stats_capacity_bytes, 1)
+            ) > 0.80
+          for: 15m
+          labels:
+            severity: warning
+            service: kubernetes-storage
+          annotations:
+            summary: "PersistentVolumeClaim usage is above 80%"
+            description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has remained above 80% filesystem usage for more than 15 minutes."
+
+        - alert: KubernetesPersistentVolumeClaimUsageCritical
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes
+              /
+              clamp_min(kubelet_volume_stats_capacity_bytes, 1)
+            ) > 0.90
+          for: 5m
+          labels:
+            severity: critical
+            service: kubernetes-storage
+          annotations:
+            summary: "PersistentVolumeClaim usage is above 90%"
+            description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has remained above 90% filesystem usage for more than 5 minutes."
+
+        - alert: KubernetesPersistentVolumeClaimInodesHigh
+          expr: |
+            (
+              kubelet_volume_stats_inodes_used
+              /
+              clamp_min(kubelet_volume_stats_inodes, 1)
+            ) > 0.90
+          for: 10m
+          labels:
+            severity: warning
+            service: kubernetes-storage
+          annotations:
+            summary: "PersistentVolumeClaim inode usage is above 90%"
+            description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has remained above 90% inode usage for more than 10 minutes."
