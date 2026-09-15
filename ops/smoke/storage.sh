@@ -7,6 +7,10 @@ PROM_HOST="${PROM_HOST:-prometheus.lab.local}"
 NAMESPACE="${STORAGE_NAMESPACE:-demo-app}"
 STATEFULSET="${STORAGE_STATEFULSET:-storage-probe}"
 PVC_PATTERN="${STORAGE_PVC_PATTERN:-data-storage-probe-.*}"
+ARGO_APP="${STORAGE_ARGO_APP:-demo-app}"
+ARGO_NAMESPACE="${ARGO_NAMESPACE:-argocd}"
+RECONCILE_MAX_POLLS="${STORAGE_RECONCILE_MAX_POLLS:-24}"
+RECONCILE_POLL_SECONDS="${STORAGE_RECONCILE_POLL_SECONDS:-5}"
 OUT_DIR="${STORAGE_OUT_DIR:-${ROOT_DIR}/.ops-smoke/$(date -u +%Y%m%dT%H%M%SZ)-storage}"
 PYTHON_BIN="$(command -v python3 || command -v python || true)"
 
@@ -14,8 +18,7 @@ log() { printf '\n[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
 [[ -n "${PYTHON_BIN}" ]] || fail "python3 or python is required"
-command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
-command -v curl >/dev/null 2>&1 || fail "curl is required"
+for cmd in kubectl curl git; do command -v "${cmd}" >/dev/null 2>&1 || fail "${cmd} is required"; done
 mkdir -p "${OUT_DIR}"
 
 prom_query() {
@@ -42,6 +45,33 @@ r=((p.get("data") or {}).get("result") or [])
 print(r[0].get("value", [None, "0"])[1] if r else "0")
 '
 }
+
+wait_for_storage_reconciliation() {
+  local expected revision sync health exists attempt
+  expected="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+  log "Argo CD storage reconciliation"
+  printf '  expected_revision=%s\n' "${expected}"
+
+  for attempt in $(seq 1 "${RECONCILE_MAX_POLLS}"); do
+    revision="$(kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.sync.revision}' 2>/dev/null || true)"
+    sync="$(kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+    health="$(kubectl get application "${ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
+    if kubectl get statefulset "${STATEFULSET}" -n "${NAMESPACE}" >/dev/null 2>&1; then exists="yes"; else exists="no"; fi
+
+    printf '  poll %s/%s: revision=%s sync=%s health=%s statefulset=%s\n' \
+      "${attempt}" "${RECONCILE_MAX_POLLS}" "${revision:-<none>}" "${sync:-<none>}" "${health:-<none>}" "${exists}"
+
+    if [[ "${revision}" == "${expected}" && "${sync}" == "Synced" && "${health}" == "Healthy" && "${exists}" == "yes" ]]; then
+      return 0
+    fi
+
+    [[ "${attempt}" == "${RECONCILE_MAX_POLLS}" ]] || sleep "${RECONCILE_POLL_SECONDS}"
+  done
+
+  fail "Argo ${ARGO_NAMESPACE}/${ARGO_APP} did not reconcile ${expected} with StatefulSet ${NAMESPACE}/${STATEFULSET}; inspect kubectl -n ${ARGO_NAMESPACE} get application ${ARGO_APP} -o yaml"
+}
+
+wait_for_storage_reconciliation
 
 log "Stateful storage workload"
 kubectl rollout status "statefulset/${STATEFULSET}" -n "${NAMESPACE}" --timeout=180s
