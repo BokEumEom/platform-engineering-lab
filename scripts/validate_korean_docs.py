@@ -11,6 +11,7 @@ REQUIRED = [
     ROOT / "docs/ko/20-multi-signal-observability.md",
     ROOT / "docs/ko/21-kubernetes-operating-environment.md",
     ROOT / "docs/ko/22-cilium-hubble-roadmap.md",
+    ROOT / "docs/ko/23-storage-smoke-runbook.md",
 ]
 
 missing = [str(path.relative_to(ROOT)) for path in REQUIRED if not path.is_file()]
@@ -23,6 +24,7 @@ for target in (
     "docs/ko/20-multi-signal-observability.md",
     "docs/ko/21-kubernetes-operating-environment.md",
     "docs/ko/22-cilium-hubble-roadmap.md",
+    "docs/ko/23-storage-smoke-runbook.md",
 ):
     if target not in ko_readme:
         raise SystemExit(f"README.ko.md must link to {target}")
@@ -30,5 +32,7 @@ for target in (
 index = (ROOT / "docs/ko/README.md").read_text(encoding="utf-8")
 if "README.ko.md" not in index:
     raise SystemExit("docs/ko/README.md must link back to README.ko.md")
+if "23-storage-smoke-runbook.md" not in index:
+    raise SystemExit("docs/ko/README.md must index 23-storage-smoke-runbook.md")
 
 print("Korean documentation entrypoint guard passed")
