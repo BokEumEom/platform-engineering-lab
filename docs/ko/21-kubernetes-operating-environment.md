@@ -80,7 +80,7 @@ PVC object metrics            present
 
 ```text
 kubelet_volume_stats_capacity_bytes = no series
-kubelet_volume_stats_used_bytes     = no series
+kubelet_volume_stats_used_bytes      = no series
 kubelet_volume_stats_available_bytes = no series
 ```
 
@@ -114,14 +114,29 @@ storage_probe_filesystem_available_bytes
 bash ops/smoke/storage.sh
 ```
 
-`git pull` 직후에는 Git의 최신 revision과 Argo CD가 관측 중인 revision 사이에 짧은 지연이 있을 수 있습니다. storage smoke는 다음 조건이 모두 성립할 때까지 bounded polling 합니다.
+Argo CD의 기본 repository reconciliation은 120초 주기에 최대 60초 jitter가 더해질 수 있습니다. 따라서 `git pull` 직후 120초만 기다리는 smoke는 정상 환경에서도 false negative가 될 수 있습니다.
+
+Storage smoke는 현재 로컬 checkout이 `origin/main`과 같은지 먼저 확인하고, 기본 5분의 bounded window 안에서 다음 조건을 기다립니다.
 
 ```text
-Argo demo-app.status.sync.revision == 현재 Git HEAD
+local HEAD == origin/main
+AND Argo demo-app.status.sync.revision == origin/main
 AND sync.status == Synced
 AND health.status == Healthy
 AND StatefulSet/demo-app/storage-probe 존재
 ```
+
+제한 시간 안에 맞지 않으면 다음 진단 정보를 같이 출력합니다.
+
+```text
+argocd-cm timeout.reconciliation
+argocd-cm timeout.reconciliation.jitter
+Application revision / sync / health / reconciledAt
+Application conditions
+operationState phase / message
+```
+
+즉 Git 최신화 문제, Argo repo refresh 지연, 실제 sync 실패를 같은 `StatefulSet NotFound` 오류로 뭉개지 않습니다.
 
 그 다음 metric source를 판별합니다.
 
