@@ -12,6 +12,7 @@ on:
       - "ops/**"
       - "scripts/**"
       - "README.md"
+      - "README.ko.md"
       - "docs/**"
       - ".github/workflows/platform-validate.yaml"
   pull_request:
@@ -24,6 +25,7 @@ on:
       - "ops/**"
       - "scripts/**"
       - "README.md"
+      - "README.ko.md"
       - "docs/**"
       - ".github/workflows/platform-validate.yaml"
   workflow_dispatch:
@@ -83,6 +85,9 @@ jobs:
           print(f"validated Grafana dashboard JSON documents: {dashboards}")
           PY
 
+      - name: Guard Korean documentation entrypoints
+        run: python scripts/validate_korean_docs.py
+
       - name: Guard Gateway route namespace access
         run: python scripts/validate_gateway_route_namespaces.py
 
@@ -136,6 +141,10 @@ jobs:
       - name: Validate Ops shell entrypoints
         run: |
           bash -n ops/smoke/reference-environment.sh
+          bash -n ops/smoke/storage.sh
+          bash -n ops/smoke/observability.sh
+          bash -n ops/smoke/multisignal-correlation.sh
+          bash -n ops/smoke/full-reference-environment.sh
           bash -n ops/benchmarks/orders-fault/run.sh
           bash -n ops/benchmarks/hpa-quota/run.sh
 
