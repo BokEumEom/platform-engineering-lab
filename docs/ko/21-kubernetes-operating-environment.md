@@ -114,17 +114,35 @@ storage_probe_filesystem_available_bytes
 bash ops/smoke/storage.sh
 ```
 
-Argo CD의 기본 repository reconciliation은 120초 주기에 최대 60초 jitter가 더해질 수 있습니다. 따라서 `git pull` 직후 120초만 기다리는 smoke는 정상 환경에서도 false negative가 될 수 있습니다.
+Argo CD의 기본 repository reconciliation은 120초 주기에 최대 60초 jitter가 더해질 수 있습니다. 따라서 짧은 polling window는 정상 환경에서도 false negative가 될 수 있습니다.
 
-Storage smoke는 현재 로컬 checkout이 `origin/main`과 같은지 먼저 확인하고, 기본 5분의 bounded window 안에서 다음 조건을 기다립니다.
+또한 storage smoke는 `origin/main`의 최신 SHA 자체를 blocking 조건으로 사용하지 않습니다. README나 CI 문서만 바뀌어도 Argo가 최신 SHA까지 갱신될 때까지 불필요하게 기다리게 되기 때문입니다.
+
+대신 현재 로컬 checkout이 `origin/main`과 같은지 확인한 뒤, Storage가 실제 의존하는 경로의 최신 변경을 계산합니다.
+
+```text
+required demo revision
+  = gitops/apps/demo-app/storage.yaml
+    + gitops/apps/demo-app/kustomization.yaml 의 최신 변경
+
+required observability revision
+  = storage-probe ServiceMonitor
+    + storage alert/dashboard/kustomization 의 최신 변경
+```
+
+기본 5분의 bounded window 안에서 다음 조건을 확인합니다.
 
 ```text
 local HEAD == origin/main
-AND Argo demo-app.status.sync.revision == origin/main
-AND sync.status == Synced
-AND health.status == Healthy
-AND StatefulSet/demo-app/storage-probe 존재
+AND required demo revision ⊆ Argo demo-app observed revision
+AND demo-app Synced / Healthy
+AND StatefulSet/storage-probe 존재
+AND required observability revision ⊆ Argo observability-config observed revision
+AND observability-config Synced / Healthy
+AND ServiceMonitor/storage-probe 존재
 ```
+
+여기서 `⊆`는 Git ancestor 관계를 뜻합니다. 즉 Argo가 해당 필수 변경 이후의 commit을 보고 있다면 통과하며, README/문서 같은 unrelated commit까지 기다리지 않습니다.
 
 제한 시간 안에 맞지 않으면 다음 진단 정보를 같이 출력합니다.
 
@@ -135,8 +153,6 @@ Application revision / sync / health / reconciledAt
 Application conditions
 operationState phase / message
 ```
-
-즉 Git 최신화 문제, Argo repo refresh 지연, 실제 sync 실패를 같은 `StatefulSet NotFound` 오류로 뭉개지 않습니다.
 
 그 다음 metric source를 판별합니다.
 
