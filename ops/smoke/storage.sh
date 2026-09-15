@@ -78,7 +78,8 @@ wait_for_probe_metrics() {
   for attempt in $(seq 1 "${METRIC_MAX_POLLS}"); do
     probe_json="$(prom_query storage-probe-usage "storage_probe_usage_ratio{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"}")"
     probe_count="$(printf '%s' "${probe_json}" | result_count)"
-    printf '  fallback poll %s/%s: storage_probe_usage_ratio series=%s\n' "${attempt}" "${METRIC_MAX_POLLS}" "${probe_count}"
+    printf '  fallback poll %s/%s: storage_probe_usage_ratio series=%s\n' \
+      "${attempt}" "${METRIC_MAX_POLLS}" "${probe_count}" >&2
     if [[ "${probe_count}" -gt 0 ]]; then
       printf '%s' "${probe_json}"
       return 0
