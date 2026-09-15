@@ -34,15 +34,15 @@ Already live verified:
 - metric → log → exact trace enrichment correlation;
 - one live verified GitOps fault/recovery benchmark.
 
-Added as the storage operating layer:
+Storage operating layer:
 
 - `storage-probe` StatefulSet;
 - one 1Gi `ReadWriteOnce` PVC using the cluster default StorageClass;
-- `STORAGE_FILL_MIB=0` as the healthy default fault profile;
+- `STORAGE_FILL_MIB=0` as the healthy default;
 - PVC object metrics through kube-state-metrics;
-- filesystem/inode metrics through kubelet volume stats when supported by the local CSI/kubelet;
-- PVC alerts and Grafana dashboard;
-- dedicated storage smoke.
+- standard CSI/kubelet filesystem/inode volume stats when the local driver supports them;
+- deterministic `storage-probe` fallback metrics when the local driver does not expose volume stats;
+- PVC alerts, Grafana storage dashboard and dedicated storage smoke.
 
 ## Storage evidence
 
@@ -54,7 +54,7 @@ kube_persistentvolumeclaim_status_phase
 kube_persistentvolumeclaim_resource_requests_storage_bytes
 ```
 
-Filesystem signals:
+Preferred filesystem signals:
 
 ```text
 kubelet_volume_stats_capacity_bytes
@@ -64,13 +64,62 @@ kubelet_volume_stats_inodes
 kubelet_volume_stats_inodes_used
 ```
 
+### Docker Desktop local volume-stats gap
+
+A live local run on 2026-09-15 proved that the StatefulSet rolled out, the PVC was `Bound` at 1Gi and PVC object metrics were present, while the current Docker Desktop local storage path returned no `kubelet_volume_stats_*` series for that PVC.
+
+This is treated as a storage-driver / CSI-kubelet capability gap rather than a PVC outage.
+
+The storage probe therefore exposes these local-lab fallback metrics:
+
+```text
+storage_probe_fill_bytes
+storage_probe_requested_capacity_bytes
+storage_probe_usage_ratio
+storage_probe_filesystem_capacity_bytes
+storage_probe_filesystem_used_bytes
+storage_probe_filesystem_available_bytes
+```
+
+The evidence rule is explicit:
+
+```text
+1. prefer kubelet_volume_stats_* when present;
+2. otherwise use storage_probe_* only in the local reference environment;
+3. do not synthesize inode evidence;
+4. never claim the fallback is equivalent to production CSI volume statistics.
+```
+
+`storage_probe_usage_ratio` is the logical fill-file size divided by the requested PVC capacity. The Docker Desktop local volume may not enforce the requested 1Gi as a filesystem quota, so this is a deterministic saturation signal for the lab rather than a complete replacement for real CSI filesystem pressure.
+
+## Storage smoke
+
 Run:
 
 ```bash
 bash ops/smoke/storage.sh
 ```
 
-The storage smoke is intentionally separate from the full reference-environment smoke until the current local CSI/kubelet path proves that volume stats are present. After live verification it can be promoted into the canonical full smoke.
+The smoke first waits for:
+
+```text
+Argo demo-app revision == current Git HEAD
+AND Synced / Healthy
+AND StatefulSet/storage-probe exists
+```
+
+It then selects the metric source:
+
+```text
+standard volume stats present
+→ metric_source=kubelet_csi
+
+standard volume stats absent
+→ verify storage_probe_usage_ratio
+→ metric_source=storage_probe_fallback
+```
+
+The smoke fails only when neither source is available.
 
 ## Storage scenario direction
 
@@ -89,7 +138,7 @@ healthy PVC
 → rollback / truncate
 ```
 
-The scenario must check `StorageClass.allowVolumeExpansion` before proposing an online resize.
+The scenario must check `StorageClass.allowVolumeExpansion` before proposing an online resize. A local fallback environment must not be presented as proof of real CSI resize behavior; that requires a CSI-capable environment.
 
 ## Network baseline before eBPF
 
@@ -105,4 +154,4 @@ Required network scenarios:
 
 ## Production-style boundary
 
-This remains a local reference environment. Production readiness additionally requires durable storage classes, snapshots/backups, CSI failure scenarios, multi-node volume behavior, topology constraints, external alert delivery, authentication/authorization and broader evaluation coverage.
+This remains a local reference environment. Production readiness additionally requires a durable StorageClass with verified CSI volume stats, snapshots/backups, CSI failure scenarios, multi-node volume behavior, topology constraints, real online expansion verification, external alert delivery, authentication/authorization and broader evaluation coverage.
