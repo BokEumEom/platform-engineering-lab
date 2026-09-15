@@ -9,6 +9,7 @@
 - [20 — Multi-signal Observability](20-multi-signal-observability.md)
 - [21 — Kubernetes 운영환경 기준](21-kubernetes-operating-environment.md)
 - [22 — Cilium / Hubble / eBPF 도입 로드맵](22-cilium-hubble-roadmap.md)
+- [23 — Storage / PVC Smoke Runbook](23-storage-smoke-runbook.md)
 
 ## 문서 원칙
 
