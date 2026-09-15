@@ -100,15 +100,20 @@ Run:
 bash ops/smoke/storage.sh
 ```
 
-Argo CD periodically polls Git and the default reconciliation window is 120 seconds plus up to 60 seconds of jitter. A two-minute smoke timeout can therefore create a false negative even when the controller is healthy.
+Argo CD periodically polls Git and the default reconciliation window is 120 seconds plus up to 60 seconds of jitter. A short polling window can therefore create a false negative even when the controller is healthy.
 
-The storage smoke first verifies that the local checkout matches `origin/main`, then waits up to five minutes for:
+The smoke does not require Argo to report the exact latest `origin/main` SHA because unrelated README, CI or documentation commits should not block storage verification. It first verifies that the local checkout matches `origin/main`, then derives the latest revisions that actually changed the storage workload and storage observability resources.
+
+Within a five-minute bounded window it requires:
 
 ```text
 local HEAD == origin/main
-AND Argo demo-app revision == origin/main
-AND Synced / Healthy
+AND required demo-app revision is an ancestor of Argo demo-app revision
+AND demo-app Synced / Healthy
 AND StatefulSet/storage-probe exists
+AND required observability revision is an ancestor of Argo observability-config revision
+AND observability-config Synced / Healthy
+AND ServiceMonitor/storage-probe exists
 ```
 
 On timeout it prints the configured reconciliation interval/jitter, Application revision/sync/health/reconciledAt, conditions and operation state so repository refresh delay can be distinguished from a real sync failure.
