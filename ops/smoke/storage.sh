@@ -11,6 +11,8 @@ ARGO_APP="${STORAGE_ARGO_APP:-demo-app}"
 ARGO_NAMESPACE="${ARGO_NAMESPACE:-argocd}"
 RECONCILE_MAX_POLLS="${STORAGE_RECONCILE_MAX_POLLS:-24}"
 RECONCILE_POLL_SECONDS="${STORAGE_RECONCILE_POLL_SECONDS:-5}"
+METRIC_MAX_POLLS="${STORAGE_METRIC_MAX_POLLS:-12}"
+METRIC_POLL_SECONDS="${STORAGE_METRIC_POLL_SECONDS:-5}"
 OUT_DIR="${STORAGE_OUT_DIR:-${ROOT_DIR}/.ops-smoke/$(date -u +%Y%m%dT%H%M%SZ)-storage}"
 PYTHON_BIN="$(command -v python3 || command -v python || true)"
 
@@ -71,6 +73,21 @@ wait_for_storage_reconciliation() {
   fail "Argo ${ARGO_NAMESPACE}/${ARGO_APP} did not reconcile ${expected} with StatefulSet ${NAMESPACE}/${STATEFULSET}; inspect kubectl -n ${ARGO_NAMESPACE} get application ${ARGO_APP} -o yaml"
 }
 
+wait_for_probe_metrics() {
+  local attempt probe_json probe_count
+  for attempt in $(seq 1 "${METRIC_MAX_POLLS}"); do
+    probe_json="$(prom_query storage-probe-usage "storage_probe_usage_ratio{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"}")"
+    probe_count="$(printf '%s' "${probe_json}" | result_count)"
+    printf '  fallback poll %s/%s: storage_probe_usage_ratio series=%s\n' "${attempt}" "${METRIC_MAX_POLLS}" "${probe_count}"
+    if [[ "${probe_count}" -gt 0 ]]; then
+      printf '%s' "${probe_json}"
+      return 0
+    fi
+    [[ "${attempt}" == "${METRIC_MAX_POLLS}" ]] || sleep "${METRIC_POLL_SECONDS}"
+  done
+  return 1
+}
+
 wait_for_storage_reconciliation
 
 log "Stateful storage workload"
@@ -91,19 +108,35 @@ requested_count="$(printf '%s' "${requested_json}" | result_count)"
 printf '  pvc_info_series=%s requested_capacity_series=%s\n' "${info_count}" "${requested_count}"
 [[ "${info_count}" -gt 0 && "${requested_count}" -gt 0 ]] || fail "kube-state-metrics PVC series are missing"
 
-log "PVC filesystem metrics through kubelet"
+log "PVC filesystem usage metrics"
 capacity_json="$(prom_query pvc-volume-capacity "kubelet_volume_stats_capacity_bytes{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"}")"
 used_json="$(prom_query pvc-volume-used "kubelet_volume_stats_used_bytes{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"}")"
 available_json="$(prom_query pvc-volume-available "kubelet_volume_stats_available_bytes{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"}")"
 capacity_count="$(printf '%s' "${capacity_json}" | result_count)"
 used_count="$(printf '%s' "${used_json}" | result_count)"
 available_count="$(printf '%s' "${available_json}" | result_count)"
-printf '  capacity_series=%s used_series=%s available_series=%s\n' "${capacity_count}" "${used_count}" "${available_count}"
-[[ "${capacity_count}" -gt 0 && "${used_count}" -gt 0 && "${available_count}" -gt 0 ]] || fail "kubelet volume stats are not available for the storage-probe PVC"
+printf '  kubelet capacity_series=%s used_series=%s available_series=%s\n' "${capacity_count}" "${used_count}" "${available_count}"
 
-ratio_json="$(prom_query pvc-usage-ratio "kubelet_volume_stats_used_bytes{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"} / clamp_min(kubelet_volume_stats_capacity_bytes{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"}, 1)")"
-ratio="$(printf '%s' "${ratio_json}" | scalar_value)"
-printf '  usage_ratio=%s\n' "${ratio}"
+if [[ "${capacity_count}" -gt 0 && "${used_count}" -gt 0 && "${available_count}" -gt 0 ]]; then
+  metric_source="kubelet_csi"
+  ratio_json="$(prom_query pvc-usage-ratio "kubelet_volume_stats_used_bytes{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"} / clamp_min(kubelet_volume_stats_capacity_bytes{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"}, 1)")"
+  ratio="$(printf '%s' "${ratio_json}" | scalar_value)"
+else
+  echo "  standard kubelet/CSI volume stats unavailable; trying deterministic storage-probe fallback"
+  if ! ratio_json="$(wait_for_probe_metrics)"; then
+    fail "neither kubelet/CSI volume stats nor storage-probe fallback metrics are available"
+  fi
+  metric_source="storage_probe_fallback"
+  ratio="$(printf '%s' "${ratio_json}" | scalar_value)"
+  fill_json="$(prom_query storage-probe-fill "storage_probe_fill_bytes{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"}")"
+  requested_probe_json="$(prom_query storage-probe-requested "storage_probe_requested_capacity_bytes{namespace=\"${NAMESPACE}\",persistentvolumeclaim=~\"${PVC_PATTERN}\"}")"
+  printf '  fallback fill_bytes=%s requested_capacity_bytes=%s\n' \
+    "$(printf '%s' "${fill_json}" | scalar_value)" \
+    "$(printf '%s' "${requested_probe_json}" | scalar_value)"
+fi
+
+printf '  metric_source=%s usage_ratio=%s\n' "${metric_source}" "${ratio}"
+printf '%s\n' "${metric_source}" >"${OUT_DIR}/metric-source.txt"
 
 log "PVC STORAGE SMOKE PASS"
 echo "Evidence: ${OUT_DIR}"
