@@ -10,9 +10,6 @@ PVC_PATTERN="${STORAGE_PVC_PATTERN:-data-storage-probe-.*}"
 ARGO_APP="${STORAGE_ARGO_APP:-demo-app}"
 OBSERVABILITY_ARGO_APP="${STORAGE_OBSERVABILITY_ARGO_APP:-observability-config}"
 ARGO_NAMESPACE="${ARGO_NAMESPACE:-argocd}"
-# Argo CD defaults to a 120s reconciliation interval plus up to 60s jitter.
-# Keep the smoke window comfortably above that so a healthy periodic refresh
-# does not become a false negative.
 RECONCILE_MAX_POLLS="${STORAGE_RECONCILE_MAX_POLLS:-60}"
 RECONCILE_POLL_SECONDS="${STORAGE_RECONCILE_POLL_SECONDS:-5}"
 METRIC_MAX_POLLS="${STORAGE_METRIC_MAX_POLLS:-12}"
@@ -113,15 +110,15 @@ wait_for_storage_reconciliation() {
     obs_health="$(kubectl get application "${OBSERVABILITY_ARGO_APP}" -n "${ARGO_NAMESPACE}" -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
 
     if kubectl get statefulset "${STATEFULSET}" -n "${NAMESPACE}" >/dev/null 2>&1; then statefulset_exists="yes"; else statefulset_exists="no"; fi
-    if kubectl get servicemonitor storage-probe -n monitoring >/dev/null 2>&1; then monitor_exists="yes"; else monitor_exists="no"; fi
+    if kubectl get servicemonitor storage-probe -n "${NAMESPACE}" >/dev/null 2>&1; then monitor_exists="yes"; else monitor_exists="no"; fi
 
     if revision_contains "${required_demo}" "${demo_revision}"; then demo_ready="yes"; else demo_ready="no"; fi
     if revision_contains "${required_observability}" "${obs_revision}"; then obs_ready="yes"; else obs_ready="no"; fi
 
-    printf '  poll %s/%s: demo revision=%s required=%s sync=%s health=%s statefulset=%s | observability revision=%s required=%s sync=%s health=%s servicemonitor=%s\n' \
+    printf '  poll %s/%s: demo revision=%s required=%s sync=%s health=%s statefulset=%s | observability revision=%s required=%s sync=%s health=%s servicemonitor=%s namespace=%s\n' \
       "${attempt}" "${RECONCILE_MAX_POLLS}" \
       "${demo_revision:-<none>}" "${demo_ready}" "${demo_sync:-<none>}" "${demo_health:-<none>}" "${statefulset_exists}" \
-      "${obs_revision:-<none>}" "${obs_ready}" "${obs_sync:-<none>}" "${obs_health:-<none>}" "${monitor_exists}"
+      "${obs_revision:-<none>}" "${obs_ready}" "${obs_sync:-<none>}" "${obs_health:-<none>}" "${monitor_exists}" "${NAMESPACE}"
 
     if [[ "${demo_ready}" == "yes" && "${demo_sync}" == "Synced" && "${demo_health}" == "Healthy" && "${statefulset_exists}" == "yes" \
        && "${obs_ready}" == "yes" && "${obs_sync}" == "Synced" && "${obs_health}" == "Healthy" && "${monitor_exists}" == "yes" ]]; then
