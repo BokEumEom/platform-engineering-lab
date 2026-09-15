@@ -1,0 +1,42 @@
+{
+  "storage_pvc_bound": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_bound",
+    "query": "max(kube_persistentvolumeclaim_status_phase{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\",phase=\"Bound\"} == 1)"
+  },
+  "storage_pvc_requested_bytes": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_requested_bytes",
+    "query": "max(kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"})"
+  },
+  "storage_csi_volume_stats_series": {
+    "component": "kubernetes-storage",
+    "signal": "csi_volume_stats_series",
+    "query": "count(kubelet_volume_stats_capacity_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"}) or vector(0)"
+  },
+  "storage_probe_fallback_series": {
+    "component": "kubernetes-storage",
+    "signal": "storage_probe_fallback_series",
+    "query": "count(storage_probe_usage_ratio{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"}) or vector(0)"
+  },
+  "storage_pvc_used_bytes": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_used_bytes",
+    "query": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"}) or max by (namespace, persistentvolumeclaim) (storage_probe_fill_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"})"
+  },
+  "storage_pvc_available_bytes": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_available_bytes",
+    "query": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"}) or max by (namespace, persistentvolumeclaim) (clamp_min(storage_probe_requested_capacity_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"} - storage_probe_fill_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"}, 0))"
+  },
+  "storage_pvc_usage_ratio": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_usage_ratio",
+    "query": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"} / clamp_min(kubelet_volume_stats_capacity_bytes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"}, 1)) or max by (namespace, persistentvolumeclaim) (storage_probe_usage_ratio{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"})"
+  },
+  "storage_pvc_inode_usage_ratio": {
+    "component": "kubernetes-storage",
+    "signal": "pvc_inode_usage_ratio",
+    "query": "max(kubelet_volume_stats_inodes_used{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"} / clamp_min(kubelet_volume_stats_inodes{namespace=\"demo-app\",persistentvolumeclaim=~\"data-storage-probe-.*\"}, 1))"
+  }
+}
