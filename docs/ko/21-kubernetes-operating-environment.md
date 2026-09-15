@@ -71,6 +71,17 @@ kubelet_volume_stats_inodes_used
 bash ops/smoke/storage.sh
 ```
 
+`git pull` 직후에는 Git의 최신 revision과 Argo CD가 관측 중인 revision 사이에 짧은 지연이 있을 수 있습니다. 따라서 storage smoke는 바로 `StatefulSet` 존재 여부만 검사하지 않고 다음 조건이 모두 성립할 때까지 bounded polling 합니다.
+
+```text
+Argo demo-app.status.sync.revision == 현재 Git HEAD
+AND sync.status == Synced
+AND health.status == Healthy
+AND StatefulSet/demo-app/storage-probe 존재
+```
+
+이 gate는 Git desired state가 아직 Argo에 반영되기 전 smoke가 false negative로 끝나는 reconciliation race를 방지합니다. 제한 시간 안에 조건이 맞지 않으면 smoke는 실패하고 Argo Application 상태를 직접 확인하도록 안내합니다.
+
 현재 local CSI/kubelet이 `kubelet_volume_stats_*`를 실제로 노출하는지 확인하기 전까지 storage smoke는 full smoke와 분리합니다. live PASS가 확인되면 canonical full smoke의 blocking gate로 승격합니다.
 
 ## Storage scenario 방향
