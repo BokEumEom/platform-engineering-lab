@@ -10,6 +10,7 @@ resources:
   - inventory.yaml
   - payments.yaml
   - recommendations.yaml
+  - storage.yaml
   - httproute.yaml
   - http-redirect.yaml
   - hpa.yaml
