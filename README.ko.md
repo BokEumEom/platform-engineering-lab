@@ -110,6 +110,16 @@ kubelet_volume_stats_inodes
 kubelet_volume_stats_inodes_used
 ```
 
+Docker Desktop local storage가 `kubelet_volume_stats_*`를 노출하지 않을 때는 local lab 전용 fallback을 사용합니다.
+
+```text
+storage_probe_fill_bytes
+storage_probe_requested_capacity_bytes
+storage_probe_usage_ratio
+```
+
+이 fallback은 production CSI volume stats와 동일한 증거로 취급하지 않습니다.
+
 Grafana에는 `Kubernetes Operations · Storage & PVC` dashboard가 추가되고, 다음 alert를 정의합니다.
 
 ```text
@@ -119,7 +129,7 @@ PVC usage > 90% for 5m
 PVC inode usage > 90% for 10m
 ```
 
-로컬 kubelet/CSI가 volume stats를 실제 노출하는지는 반드시 runtime smoke로 검증합니다.
+Storage smoke는 workload, PVC, object metrics, CSI/kubelet volume stats 또는 local fallback을 검증합니다.
 
 ```bash
 bash ops/smoke/storage.sh
@@ -262,6 +272,7 @@ platform-engineering-lab/
 - [Multi-signal Observability](docs/ko/20-multi-signal-observability.md)
 - [Kubernetes 운영환경 기준](docs/ko/21-kubernetes-operating-environment.md)
 - [Cilium / Hubble / eBPF 도입 로드맵](docs/ko/22-cilium-hubble-roadmap.md)
+- [Storage / PVC Smoke Runbook](docs/ko/23-storage-smoke-runbook.md)
 
 ## Production-readiness 경계
 
