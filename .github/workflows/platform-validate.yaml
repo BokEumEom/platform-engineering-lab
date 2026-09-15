@@ -132,6 +132,30 @@ jobs:
       - name: Render observability GitOps
         run: kubectl kustomize observability >/tmp/observability.yaml
 
+      - name: Guard storage probe metric contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          manifest = Path("gitops/apps/demo-app/storage.yaml").read_text(encoding="utf-8")
+          monitor = Path("observability/storage-probe-servicemonitor.yaml").read_text(encoding="utf-8")
+          alerts = Path("observability/storage-alerts.yaml").read_text(encoding="utf-8")
+          required = [
+              "storage_probe_fill_bytes",
+              "storage_probe_requested_capacity_bytes",
+              "storage_probe_usage_ratio",
+          ]
+          for metric in required:
+              if metric not in manifest:
+                  raise SystemExit(f"storage probe manifest does not expose {metric}")
+          if "port: metrics" not in monitor or "path: /metrics" not in monitor:
+              raise SystemExit("storage probe ServiceMonitor must scrape the metrics port at /metrics")
+          if "storage_probe_usage_ratio" not in alerts:
+              raise SystemExit("storage alerts must preserve the local-lab fallback path")
+          print("storage probe metric contract guard passed")
+          PY
+
       - name: Validate Terraform reference environment
         run: |
           terraform -chdir=terraform/reference-environment fmt -check -recursive
@@ -196,5 +220,7 @@ jobs:
             -f observability/alloy-values.yaml \
             >/tmp/alloy.yaml
 
-      - name: Validate Prometheus query profile JSON
-        run: python -m json.tool observability/agent-prometheus-queries.json >/dev/null
+      - name: Validate Agent query profile JSON
+        run: |
+          python -m json.tool observability/agent-prometheus-queries.json >/dev/null
+          python -m json.tool observability/agent-storage-prometheus-queries.json >/dev/null
