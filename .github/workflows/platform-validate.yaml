@@ -137,10 +137,17 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import yaml
 
-          manifest = Path("gitops/apps/demo-app/storage.yaml").read_text(encoding="utf-8")
-          monitor = Path("observability/storage-probe-servicemonitor.yaml").read_text(encoding="utf-8")
-          alerts = Path("observability/storage-alerts.yaml").read_text(encoding="utf-8")
+          manifest_path = Path("gitops/apps/demo-app/storage.yaml")
+          monitor_path = Path("observability/storage-probe-servicemonitor.yaml")
+          alerts_path = Path("observability/storage-alerts.yaml")
+
+          manifest = manifest_path.read_text(encoding="utf-8")
+          monitor_text = monitor_path.read_text(encoding="utf-8")
+          alerts = alerts_path.read_text(encoding="utf-8")
+          monitor = yaml.safe_load(monitor_text)
+
           required = [
               "storage_probe_fill_bytes",
               "storage_probe_requested_capacity_bytes",
@@ -149,7 +156,14 @@ jobs:
           for metric in required:
               if metric not in manifest:
                   raise SystemExit(f"storage probe manifest does not expose {metric}")
-          if "port: metrics" not in monitor or "path: /metrics" not in monitor:
+
+          if monitor.get("kind") != "ServiceMonitor":
+              raise SystemExit("storage probe monitor must be a ServiceMonitor")
+          namespace = (monitor.get("metadata") or {}).get("namespace")
+          if namespace != "demo-app":
+              raise SystemExit(f"storage probe ServiceMonitor must live with the target Service in demo-app, got {namespace!r}")
+          endpoints = (monitor.get("spec") or {}).get("endpoints") or []
+          if not any(endpoint.get("port") == "metrics" and endpoint.get("path") == "/metrics" for endpoint in endpoints):
               raise SystemExit("storage probe ServiceMonitor must scrape the metrics port at /metrics")
           if "storage_probe_usage_ratio" not in alerts:
               raise SystemExit("storage alerts must preserve the local-lab fallback path")
