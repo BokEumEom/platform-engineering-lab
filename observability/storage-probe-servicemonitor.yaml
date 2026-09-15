@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: storage-probe
+  namespace: demo-app
+  labels:
+    app.kubernetes.io/part-of: platform-demo
+    app.kubernetes.io/component: storage
+spec:
+  selector:
+    matchLabels:
+      app: storage-probe
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
