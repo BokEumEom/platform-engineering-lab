@@ -34,20 +34,21 @@ workload lifecycle
 - metric → log → exact trace correlation
 - GitOps fault/recovery benchmark 1건
 
-이번에 storage 운영 계층으로 추가한 항목:
+Storage 운영 계층:
 
 - `storage-probe` StatefulSet
 - cluster 기본 StorageClass를 사용하는 1Gi `ReadWriteOnce` PVC
 - 정상 기본값 `STORAGE_FILL_MIB=0`
 - kube-state-metrics 기반 PVC object metrics
-- kubelet/CSI가 지원하는 경우 filesystem/inode volume stats
+- CSI/kubelet이 지원하는 경우 표준 filesystem/inode volume stats
+- 로컬 CSI가 volume stats를 제공하지 않을 때만 사용하는 `storage-probe` fallback metrics
 - PVC alert
 - Grafana storage dashboard
 - storage 전용 smoke test
 
 ## PVC / Storage evidence
 
-Object 상태:
+Object 상태는 kube-state-metrics를 사용합니다.
 
 ```text
 kube_persistentvolumeclaim_info
@@ -55,7 +56,7 @@ kube_persistentvolumeclaim_status_phase
 kube_persistentvolumeclaim_resource_requests_storage_bytes
 ```
 
-Filesystem 사용량:
+표준 filesystem 사용량은 CSI/kubelet volume stats를 최우선으로 사용합니다.
 
 ```text
 kubelet_volume_stats_capacity_bytes
@@ -65,13 +66,55 @@ kubelet_volume_stats_inodes
 kubelet_volume_stats_inodes_used
 ```
 
-검증:
+### Docker Desktop local storage의 volume-stats gap
+
+2026-09-15 local runtime 검증에서 다음은 정상 동작했습니다.
+
+```text
+StatefulSet/storage-probe      rollout complete
+PVC/data-storage-probe-0      Bound / 1Gi
+PVC object metrics            present
+```
+
+반면 현재 Docker Desktop local storage 경로에서는 다음 series가 반환되지 않았습니다.
+
+```text
+kubelet_volume_stats_capacity_bytes = no series
+kubelet_volume_stats_used_bytes     = no series
+kubelet_volume_stats_available_bytes = no series
+```
+
+이 결과는 PVC 장애로 해석하지 않습니다. PVC는 Bound이고 workload도 정상이며, 현재 local storage driver/CSI-kubelet 경로가 volume stats를 제공하지 않는 capability gap입니다.
+
+이를 위해 `storage-probe`는 `/metrics`에서 다음 deterministic fallback을 노출합니다.
+
+```text
+storage_probe_fill_bytes
+storage_probe_requested_capacity_bytes
+storage_probe_usage_ratio
+storage_probe_filesystem_capacity_bytes
+storage_probe_filesystem_used_bytes
+storage_probe_filesystem_available_bytes
+```
+
+운영 규칙은 다음과 같습니다.
+
+```text
+1. kubelet_volume_stats_*가 있으면 그것을 사용
+2. 없으면 local lab에서만 storage_probe_* 사용
+3. inode 지표는 synthetic fallback을 만들지 않음
+4. fallback을 production CSI volume stats와 동일한 증거라고 주장하지 않음
+```
+
+`storage_probe_usage_ratio`는 의도적으로 만든 fill 파일의 논리 크기를 PVC 요청 용량으로 나눈 값입니다. Docker Desktop의 기본 local volume이 PVC 요청 용량을 실제 filesystem quota로 강제하지 않을 수 있으므로, 이 지표는 **재현 가능한 lab saturation signal**이지 실제 CSI filesystem pressure의 완전한 대체물이 아닙니다.
+
+## Storage smoke
 
 ```bash
 bash ops/smoke/storage.sh
 ```
 
-`git pull` 직후에는 Git의 최신 revision과 Argo CD가 관측 중인 revision 사이에 짧은 지연이 있을 수 있습니다. 따라서 storage smoke는 바로 `StatefulSet` 존재 여부만 검사하지 않고 다음 조건이 모두 성립할 때까지 bounded polling 합니다.
+`git pull` 직후에는 Git의 최신 revision과 Argo CD가 관측 중인 revision 사이에 짧은 지연이 있을 수 있습니다. storage smoke는 다음 조건이 모두 성립할 때까지 bounded polling 합니다.
 
 ```text
 Argo demo-app.status.sync.revision == 현재 Git HEAD
@@ -80,9 +123,18 @@ AND health.status == Healthy
 AND StatefulSet/demo-app/storage-probe 존재
 ```
 
-이 gate는 Git desired state가 아직 Argo에 반영되기 전 smoke가 false negative로 끝나는 reconciliation race를 방지합니다. 제한 시간 안에 조건이 맞지 않으면 smoke는 실패하고 Argo Application 상태를 직접 확인하도록 안내합니다.
+그 다음 metric source를 판별합니다.
 
-현재 local CSI/kubelet이 `kubelet_volume_stats_*`를 실제로 노출하는지 확인하기 전까지 storage smoke는 full smoke와 분리합니다. live PASS가 확인되면 canonical full smoke의 blocking gate로 승격합니다.
+```text
+kubelet/CSI volume stats 있음
+→ metric_source=kubelet_csi
+
+kubelet/CSI volume stats 없음
+→ storage_probe_usage_ratio 확인
+→ metric_source=storage_probe_fallback
+```
+
+둘 다 없을 때만 storage smoke를 실패시킵니다. live PASS 후 storage 검증을 canonical full smoke의 blocking gate로 승격할 수 있습니다.
 
 ## Storage scenario 방향
 
@@ -101,7 +153,7 @@ healthy PVC
 → rollback / truncate
 ```
 
-PVC resize를 제안하기 전에는 반드시 `StorageClass.allowVolumeExpansion`을 확인해야 합니다.
+PVC resize를 제안하기 전에는 반드시 `StorageClass.allowVolumeExpansion`을 확인해야 합니다. Local fallback 환경에서 resize를 실제 storage remediation이라고 주장하지 않고, 별도의 CSI-capable environment에서 resize semantics를 검증해야 합니다.
 
 ## eBPF 이전 Network baseline
 
@@ -119,11 +171,12 @@ CNI를 바꾸기 전에 현재 dataplane에서 deterministic NetworkPolicy scena
 
 이 환경은 local reference environment입니다. Production storage 운영까지 주장하려면 다음이 더 필요합니다.
 
-- durable StorageClass
+- CSI volume stats가 검증된 durable StorageClass
 - volume snapshot / backup
 - CSI failure scenario
 - multi-node volume behavior
 - topology / zone constraint
+- 실제 online expansion 검증
 - external alert delivery
 - observability API authentication / authorization
 - 더 넓은 failure/evaluation corpus
