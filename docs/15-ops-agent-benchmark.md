@@ -37,7 +37,7 @@ time to correlated detection: ~2m
 remediation-to-healthy:       ~8m10s
 ```
 
-The detailed result and the learning extracted from that run are recorded in [`reports/2026-09-14-orders-fault-benchmark.md`](../reports/2026-09-14-orders-fault-benchmark.md).
+The detailed result and the learning extracted from that run are recorded in [`docs/evidence/2026-09-14-orders-fault-benchmark.md`](evidence/2026-09-14-orders-fault-benchmark.md).
 
 ## Benchmark question
 

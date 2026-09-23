@@ -104,7 +104,7 @@ MULTI-SIGNAL CORRELATION PASS
 FULL REFERENCE ENVIRONMENT SMOKE PASS
 ```
 
-The detailed runtime report is `reports/2026-09-14-multisignal-observability-smoke.md`.
+The detailed runtime report is `docs/evidence/2026-09-14-multisignal-observability-smoke.md`.
 
 ## Current local-lab durability boundaries
 

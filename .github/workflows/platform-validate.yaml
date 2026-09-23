@@ -85,8 +85,8 @@ jobs:
           print(f"validated Grafana dashboard JSON documents: {dashboards}")
           PY
 
-      - name: Guard Korean documentation entrypoints
-        run: python scripts/validate_korean_docs.py
+      - name: Validate documentation structure
+        run: python scripts/validate_docs.py
 
       - name: Guard Gateway route namespace access
         run: python scripts/validate_gateway_route_namespaces.py
