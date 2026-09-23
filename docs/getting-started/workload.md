@@ -1,53 +1,110 @@
-# Workload and GitOps
+# Workload
 
-The reference application reuses one immutable FastAPI image across multiple service roles. Kubernetes manifests, Argo CD, and CI/CD then provide the desired-state delivery path.
+[Back to getting started](README.md)
 
-## Workload health
+This chapter owns the application workload, probes, and resource configuration.
 
-The application exposes liveness and readiness endpoints. Readiness answers whether a Pod should receive traffic; liveness answers whether the container should be restarted.
+## Part 4. FastAPI workload
 
-Inspect rollout and probes from actual cluster state:
+### 9. Repository clone
 
-~~~bash
-kubectl get deploy,pod,svc -n demo-app
-kubectl describe pod -n demo-app <pod>
-~~~
+```bash
+git clone git@github.com:BokEumEom/platform-engineering-lab.git
+cd platform-engineering-lab
+```
 
-## Render before reconciliation
+현재 주요 구조:
 
-Before asking Argo CD to reconcile a change, render the repository manifests:
+```text
+apps/api/
+  Dockerfile
+  main.py
+  requirements.txt
 
-~~~bash
-kubectl kustomize gitops/platform >/tmp/platform.yaml
-kubectl kustomize gitops/apps/demo-app >/tmp/demo-app.yaml
-~~~
+gitops/platform/
+  gatewayclass.yaml
+  gateway.yaml
+  kustomization.yaml
 
-When a cluster is available, server-side dry run can catch API and admission problems that local rendering cannot.
+gitops/apps/demo-app/
+  deployment.yaml
+  service.yaml
+  httproute.yaml
+  hpa.yaml
+  pdb.yaml
+  kustomization.yaml
+```
 
-## Argo CD ownership
+---
 
-Git is desired state, Kubernetes is actual state, and Argo CD reconciles the two.
+### 10. FastAPI endpoints
 
-~~~bash
-kubectl get applications -n argocd
-~~~
+샘플 API는 다음 endpoint를 제공합니다.
 
-Application resources use automated reconciliation. Runtime-owned fields must not fight GitOps. The canonical example is Deployment replica count when HPA owns scaling; Argo CD must respect that field boundary.
+```text
+GET /
+GET /health/live
+GET /health/ready
+```
 
-Do not solve an owned-resource problem with a permanent ad-hoc kubectl patch.
+`/` 응답에는 Pod hostname과 version이 포함됩니다.
 
-## CI/CD
+이유:
 
-The CI/CD path builds an immutable image, publishes it, updates GitOps desired state, and lets Argo CD perform reconciliation. Verify the final deployed image and rollout from the cluster instead of assuming a successful build equals a successful deployment.
+```text
+hostname
+ -> 어느 Pod가 요청을 처리했는지 확인
 
-~~~bash
-kubectl get deploy -n demo-app
-kubectl rollout status deployment/platform-api -n demo-app
-kubectl get pods -n demo-app -o wide
-~~~
+version
+ -> 어느 application version이 배포됐는지 확인
+```
 
-Use the actual Deployment names present in the current manifests when running rollout checks.
+---
 
-## Next validation
+### 11. Probe 이해
 
-Before controlled failure scenarios, run the documented [reference environment smoke test](../18-reference-environment-smoke-test.md). Runtime claims should be supported by fresh evidence, not only by a rendered manifest or green CI.
+Deployment에는 readiness와 liveness probe가 있습니다.
+
+```text
+readinessProbe
+ -> 지금 traffic을 받아도 되는가?
+
+livenessProbe
+ -> container가 살아 있는가? 재시작이 필요한가?
+```
+
+확인:
+
+```bash
+kubectl describe pod -n demo-app <pod-name>
+```
+
+---
+
+### 12. Resource requests / limits
+
+현재 application 예시:
+
+```yaml
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+```
+
+중요한 이유:
+
+```text
+Scheduler
+ -> requests를 기준으로 node 배치 판단
+
+HPA CPU utilization
+ -> actual CPU / requested CPU
+```
+
+따라서 requests는 단순 문서 값이 아니라 scheduling과 autoscaling에 직접 영향을 줍니다.
+
+---
