@@ -1,6 +1,6 @@
 # Kubernetes Platform Lab — Step by Step
 
-This path is retained for compatibility. The former monolithic lab guide overlapped with docs/00-beginner-walkthrough.md, so the shared content now lives in smaller canonical chapters.
+This path is retained for compatibility. The former monolithic lab guide overlapped with docs/00-beginner-walkthrough.md, so the shared material now has one canonical home under getting-started/.
 
 Follow [Getting started](getting-started/README.md).
 
@@ -9,7 +9,10 @@ Follow [Getting started](getting-started/README.md).
 - [Environment](getting-started/environment.md)
 - [Kubernetes basics](getting-started/kubernetes-basics.md)
 - [Gateway](getting-started/gateway.md)
-- [Workload and GitOps](getting-started/workload.md)
+- [Workload](getting-started/workload.md)
+- [GitOps](getting-started/gitops.md)
+- [Delivery](getting-started/delivery.md)
+- [Troubleshooting](getting-started/troubleshooting.md)
 
 Continue through the [documentation index](README.md) for observability, tracing, TLS, operational runbooks, benchmarks, and evidence.
 
